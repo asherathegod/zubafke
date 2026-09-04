@@ -75,6 +75,10 @@ class SroBotEngine {
     this.rateLimitBackoffUntil = 0;
     this.targetEngagedTime = 0;
     this.targetLastDamageTime = 0;
+    this.throttlePenaltyMs = 0; // Dynamically added delay when rate limit occurs
+    this.consecutiveRateLimits = 0;
+    this.lastRateLimitTime = 0;
+    this.lastActionOrProgressTime = Date.now();
 
     // Callbacks
     this.onStateChange = null;
@@ -192,6 +196,7 @@ class SroBotEngine {
   dispatchKey(key, durationMs = 50) {
     this.stats.actionsCount++;
     this.stats.actionTimestamps.push(Date.now());
+    this.lastActionOrProgressTime = Date.now();
     this.keyDispatcher(key, durationMs);
   }
 
@@ -208,10 +213,18 @@ class SroBotEngine {
   }
 
   handleTooManyRequests(reason) {
-    this.rateLimitBackoffUntil = Date.now() + 1600;
-    this.log('WARN', `⚠️ Sunucu istek sınırı algılandı (${reason || 'Too many requests'}). 1.6s bekleniyor...`, 'warn');
-    if (this.telemetry.target.hasTarget) {
-      this.abandonTarget("İstek Sınırı / Engel");
+    this.consecutiveRateLimits = (this.consecutiveRateLimits || 0) + 1;
+    this.throttlePenaltyMs = Math.min(300, (this.throttlePenaltyMs || 0) + 70);
+    this.lastRateLimitTime = Date.now();
+
+    const backoffMs = Math.min(4000, 1400 + this.consecutiveRateLimits * 500);
+    this.rateLimitBackoffUntil = Date.now() + backoffMs;
+
+    this.log('WARN', `⚠️ Sunucu istek sınırı! Gecikmeler +${this.throttlePenaltyMs}ms artırıldı, ${(backoffMs/1000).toFixed(1)}s bekleniyor...`, 'warn');
+    
+    // Always immediately release any stuck target to prevent freezing
+    if (this.telemetry.target.hasTarget || this.telemetry.target.id) {
+      this.abandonTarget("İstek Sınırı / Hız Cezası");
     }
   }
 
@@ -328,7 +341,7 @@ class SroBotEngine {
       const slotKey = buff.slot || '1';
       this.log('BUFF', `🛡️ Buff Basılıyor: ${buff.name} [Sayfa: ${pageKey || 'Mevcut'} | Slot: ${slotKey}]`, 'info');
       this.dispatchKey(slotKey, 60);
-      await this.sleep(this.applyJitter(buff.castDelayMs || 400));
+      await this.sleep(this.applyJitter((buff.castDelayMs || 400) + (this.throttlePenaltyMs || 0)));
 
       // Restore hotbar page to F1
       if (needPageSwitch) {
@@ -723,7 +736,7 @@ class SroBotEngine {
     const keys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
     if (keys.length === 0) keys.push("1");
 
-    const keyDelay = Math.max(160, this.config.combat.keyDelayMs || 280);
+    const keyDelay = Math.max(180, (this.config.combat.keyDelayMs || 280) + (this.throttlePenaltyMs || 0));
     let keyIdx = 0;
     let targetAbsentStartTime = 0;
     let mobDiedSuccessfully = false;
@@ -811,7 +824,7 @@ class SroBotEngine {
 
   async executeSafeLooting() {
     const burstCount = Math.max(3, Math.min(20, this.config.looting.spaceBurstCount || 10));
-    const burstInterval = Math.max(120, this.config.looting.burstIntervalMs || 160);
+    const burstInterval = Math.max(130, (this.config.looting.burstIntervalMs || 160) + Math.round((this.throttlePenaltyMs || 0) * 0.5));
     const lootKey = this.config.looting.key || "Space";
     const dynamicStopMs = this.config.looting.dynamicLogStopMs || 500;
 
@@ -870,6 +883,27 @@ class SroBotEngine {
       if (this.running && this.stats.startTime) {
         this.stats.totalRunTimeMs = Date.now() - this.stats.startTime;
       }
+
+      // Gracefully decay throttle penalty when running smoothly for >16s
+      if (this.throttlePenaltyMs > 0 && (Date.now() - this.lastRateLimitTime > 16000)) {
+        this.throttlePenaltyMs = Math.max(0, this.throttlePenaltyMs - 25);
+        if (this.throttlePenaltyMs === 0) {
+          this.consecutiveRateLimits = 0;
+        }
+      }
+
+      // Anti-Freeze Watchdog: if stuck in ATTACKING/WALKING for >12s without key progress
+      if (this.running && !this.paused && (this.state === 'ATTACKING' || this.state === 'WALKING')) {
+        if (Date.now() - this.lastActionOrProgressTime > 12000) {
+          this.log('SYS', '🔄 Donma önleyici (Watchdog): Kilitlenmeler sıfırlandı, yeni hedefe geçiliyor.', 'warn');
+          this.buffExecutionInProgress = false;
+          this.rateLimitBackoffUntil = 0;
+          this.abandonTarget("Watchdog Kurtarma");
+          this.setState('SEARCHING');
+          this.lastActionOrProgressTime = Date.now();
+        }
+      }
+
       this.updateStatsDisplay();
     }, 1000);
   }
