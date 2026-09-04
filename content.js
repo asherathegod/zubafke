@@ -132,6 +132,10 @@
         }
       } else if (type === 'SPEED_SCROLL_USED') {
         engine.log('BUFF', `⚡ Hızlı Koşma Scrollu Basıldı: [${payload.item?.name || payload.item?.itemId || 'Speed Scroll'}] (Slot: ${payload.slot})`, 'success');
+      } else if (type === 'PLAYER_CAST_START') {
+        if (payload?.castMs) {
+          engine.playerCastingUntil = Date.now() + payload.castMs;
+        }
       } else if (type === 'PARTY_ASSIST_TARGET') {
         if (payload?.targetId) {
           engine.handlePartyAssistTarget(payload);

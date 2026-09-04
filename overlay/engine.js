@@ -109,7 +109,7 @@ class SroBotEngine {
       },
       combat: {
         skillKeySequence: "1,2,3,4",
-        keyDelayMs: 280
+        keyDelayMs: 450
       },
       hunting: {
         rangeEnabled: true,
@@ -262,6 +262,16 @@ class SroBotEngine {
       this.abandonTarget("20+ Üst Üste İstek Sınırı");
       this.consecutiveRateLimits = 0;
     }
+  }
+
+  isFriendlyPartyMember(id, name) {
+    if (!id && !name) return false;
+    if (id === this.telemetry.player?.id) return true;
+    const members = this.telemetry.party?.members || [];
+    return members.some(m =>
+      (id && m.entityId === id) ||
+      (name && m.name && m.name.toLowerCase() === name.toLowerCase())
+    );
   }
 
   abandonTarget(reason = "Takılma / Ulaşılamıyor") {
@@ -592,8 +602,9 @@ class SroBotEngine {
   traceSpecificMember(memberName) {
     if (!this.running || this.paused) return;
     if (!memberName) return;
-    // PAUSE movement during combat: in Silkroad moving cancels skill cast animations!
-    if (this.state === 'ATTACKING' || (this.telemetry.target.hasTarget && !this.telemetry.target.isDead)) {
+    // PAUSE movement only during ACTIVE valid mob combat!
+    const isAttackingValidMob = (this.state === 'ATTACKING' && this.telemetry.target.hasTarget && !this.telemetry.target.isDead && !this.isFriendlyPartyMember(this.telemetry.target.id, this.telemetry.target.name));
+    if (isAttackingValidMob) {
       return;
     }
     const members = this.telemetry.party?.members || [];
@@ -626,8 +637,9 @@ class SroBotEngine {
   checkAndExecuteAutoTrace() {
     if (!this.running || this.paused) return;
     if (!this.config.party?.autoTraceEnabled) return;
-    // PAUSE movement during combat: in Silkroad moving cancels skill cast animations!
-    if (this.state === 'ATTACKING' || (this.telemetry.target.hasTarget && !this.telemetry.target.isDead)) {
+    // PAUSE movement only during ACTIVE valid mob combat!
+    const isAttackingValidMob = (this.state === 'ATTACKING' && this.telemetry.target.hasTarget && !this.telemetry.target.isDead && !this.isFriendlyPartyMember(this.telemetry.target.id, this.telemetry.target.name));
+    if (isAttackingValidMob) {
       return;
     }
     const targetName = (this.config.party.traceTargetName || "").trim().toLowerCase();
@@ -697,11 +709,19 @@ class SroBotEngine {
       this.checkAndAllocateStats();
     }
     if (data.target) {
-      const isAssistActive = !!(this.config.party?.assistEnabled && this.config.party?.assistMemberName && this.telemetry.target.id && !this.telemetry.target.isDead && (Date.now() - (this.targetLastSeenTime || 0) < 5000));
-      if (isAssistActive && !data.target.hasTarget && data.target.isDead) {
-        // Protect assist target from being prematurely dropped by empty scrape
+      // NEVER allow a friendly party member to be stored as attack target!
+      if (data.target.name && this.isFriendlyPartyMember(null, data.target.name)) {
+        this.telemetry.target.hasTarget = false;
+        this.telemetry.target.id = null;
+        this.telemetry.target.name = '';
+        this.clearTargetDispatcher();
       } else {
-        Object.assign(this.telemetry.target, data.target);
+        const isAssistActive = !!(this.config.party?.assistEnabled && this.config.party?.assistMemberName && this.telemetry.target.id && !this.telemetry.target.isDead && (Date.now() - (this.targetLastSeenTime || 0) < 5000));
+        if (isAssistActive && !data.target.hasTarget && data.target.isDead) {
+          // Protect assist target from being prematurely dropped by empty scrape
+        } else {
+          Object.assign(this.telemetry.target, data.target);
+        }
       }
     }
     if (data.lastItemReceivedTime) {
@@ -949,7 +969,7 @@ class SroBotEngine {
                 }
               }
 
-              // 2. Lock on target:
+              // 2. Lock on target (SINGLE clean target selection, NO conflicting Tab, NO conflicting auto-attack packet!):
               this.telemetry.target.id = targetMobId;
               this.telemetry.target.hasTarget = true;
               this.telemetry.target.isDead = false;
@@ -959,24 +979,15 @@ class SroBotEngine {
               this.telemetry.target.hpCurrent = assist.hpCurrent || 0;
               this.targetLastSeenTime = Date.now();
 
-              // Send target dispatcher with name and hp
+              // Notify inpage to set target in client engine & send target.set
               this.targetDispatcher({
                 id: targetMobId,
                 name: assist.targetName,
                 hpPercent: this.telemetry.target.hpPercent
               });
 
-              // Send server combat.attack packet
-              this.sendGamePacket({
-                t: 'combat.attack',
-                d: { id: targetMobId }
-              });
-
-              // Tap Tab right in front of the mob to ensure client 3D engine selects it!
-              this.dispatchKey('Tab', 40);
-
               this.log('TARGET', `🎯 Parti Üyesi [${memberName}] hedefine kilitlenildi: [${this.telemetry.target.name}]`, 'success');
-              await this.sleep(150);
+              await this.sleep(120);
             } else {
               // No mob to attack right now: Follow the designated party member!
               this.traceSpecificMember(memberName);
@@ -1129,12 +1140,22 @@ class SroBotEngine {
       const keyToPress = keys[keyIdx % keys.length];
       keyIdx++;
 
+      // If player is currently casting a skill, WAIT for cast animation to finish!
+      // In Silkroad, pressing the next skill key or moving while casting cancels the active animation!
+      const castWaitStart = Date.now();
+      while (this.running && !this.paused && this.playerCastingUntil && this.playerCastingUntil > Date.now()) {
+        const remaining = Math.min(2500, this.playerCastingUntil - Date.now());
+        await this.sleep(Math.max(80, remaining));
+        if (Date.now() - castWaitStart > 3500) break; // Timeout safety
+      }
+
       this.stats.skillsCast++;
       this.dispatchKey(keyToPress, 55);
 
       const currentHp = this.telemetry.target.hpPercent !== undefined ? `%${this.telemetry.target.hpPercent}` : '?';
       this.log('SKILL', `⚡ Vuruş: [${keyToPress}] -> [${mobName}] Canı: ${currentHp}`, 'info');
 
+      // Wait keyDelay plus allow server cast.start to register
       await this.sleep(this.applyJitter(keyDelay));
     }
 

@@ -27,11 +27,25 @@ class SroHudController {
     this.shadowRoot.innerHTML = `
       <link rel="stylesheet" href="${chrome.runtime.getURL('overlay/hud.css')}">
 
-      <!-- Minimized Floating Bubble -->
-      <div id="sro-minimized" class="sro-minimized-badge hidden">
-        <span style="font-size:14px;">🤖</span>
-        <span id="sro-mini-status" class="sro-status-pill sro-status-idle">IDLE</span>
-        <button id="sro-restore-btn" class="sro-btn sro-btn-primary" style="padding:2px 8px;font-size:11px;">Genişlet 🗖</button>
+      <!-- Minimized Floating Dynamic Island -->
+      <div id="sro-minimized" class="sro-minimized-badge hidden" title="Sürükleyerek istediğiniz yere taşıyabilirsiniz">
+        <span style="font-size:15px;filter:drop-shadow(0 0 4px rgba(56,189,248,0.5));">🤖</span>
+        <span id="sro-mini-status" class="sro-status-pill sro-status-idle" style="font-size:10px;padding:2px 7px;">IDLE</span>
+        
+        <!-- Live Target Capsule -->
+        <div id="sro-mini-target-pill" style="display:flex;align-items:center;gap:5px;background:rgba(15,23,42,0.7);padding:2px 8px;border-radius:12px;border:1px solid rgba(255,255,255,0.08);">
+          <span style="font-size:11px;">🎯</span>
+          <span id="sro-mini-target-name" style="font-size:11px;font-weight:600;color:#f8fafc;max-width:85px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">Hedef Yok</span>
+          <span id="sro-mini-target-hp" style="font-size:11px;font-weight:700;color:#94a3b8;">—</span>
+        </div>
+
+        <!-- Mini Stats Capsule -->
+        <div style="display:flex;align-items:center;gap:6px;font-size:10px;color:#94a3b8;">
+          <span title="Dakikalık Eylem Hızı">⚡ <strong id="sro-mini-apm" style="color:#10b981;">0</strong></span>
+          <span title="Toplanan Kutu Sayısı">📦 <strong id="sro-mini-drops" style="color:#f59e0b;">0</strong></span>
+        </div>
+
+        <button id="sro-restore-btn" class="sro-btn sro-btn-primary" style="padding:2px 8px;font-size:11px;border-radius:12px;margin-left:2px;" title="Genişlet">🗖</button>
       </div>
 
       <!-- Main HUD Window -->
@@ -42,7 +56,7 @@ class SroHudController {
           <div class="sro-title-box">
             <span style="font-size:16px;">⚔️</span>
             <span class="sro-title">Silkroad Macro Bot Pro</span>
-            <span style="font-size:10px;background:#b45309;color:#fff;padding:1px 5px;border-radius:3px;font-weight:bold;">v3.6.8 Pro</span>
+            <span style="font-size:10px;background:#b45309;color:#fff;padding:1px 5px;border-radius:3px;font-weight:bold;">v3.7.0 Pro</span>
           </div>
           <div class="sro-header-controls">
             <button id="sro-minimize-btn" class="sro-icon-btn" title="Simge Durumuna Küçült">—</button>
@@ -107,7 +121,7 @@ class SroHudController {
             <div class="sro-row sro-field-group" style="margin-top:8px;">
               <div style="flex:1;">
                 <label class="sro-label">Tuş Gecikmesi (ms)</label>
-                <input id="cfg-skill-delay" type="number" class="sro-input" value="280" min="160" max="1000">
+                <input id="cfg-skill-delay" type="number" class="sro-input" value="450" min="160" max="1000">
               </div>
               <div style="flex:1;">
                 <label class="sro-label">Hedef Tuşu</label>
@@ -365,7 +379,7 @@ class SroHudController {
               <div style="display:flex;justify-content:space-between;align-items:center;">
                 <div>
                   <strong style="color:#60a5fa;font-size:12px;">🚀 Bot Sürümü & Otomatik Güncelleme</strong>
-                  <div style="font-size:10px;color:#cbd5e1;margin-top:2px;">Mevcut Sürüm: <span style="color:#f1c40f;font-weight:bold;">v3.6.8 Pro</span></div>
+                  <div style="font-size:10px;color:#cbd5e1;margin-top:2px;">Mevcut Sürüm: <span style="color:#f1c40f;font-weight:bold;">v3.7.0 Pro</span></div>
                 </div>
                 <button id="btn-check-updates" class="sro-btn sro-btn-primary" style="font-size:10px;padding:4px 10px;">🔄 Güncellemeleri Denetle</button>
               </div>
@@ -1031,6 +1045,7 @@ class SroHudController {
 
     // Dragging
     this.makeDraggable($('sro-drag-header'), $('sro-hud-panel'));
+    this.makeDraggable($('sro-minimized'), $('sro-minimized'));
   }
 
   makeDraggable(handle, panel) {
@@ -1038,7 +1053,7 @@ class SroHudController {
     let startX, startY, initialLeft, initialTop;
 
     handle.addEventListener('mousedown', (e) => {
-      if (e.target.closest('.sro-header-controls')) return;
+      if (e.target.closest('.sro-header-controls') || e.target.closest('button')) return;
       isDragging = true;
       startX = e.clientX;
       startY = e.clientY;
@@ -1046,6 +1061,7 @@ class SroHudController {
       initialLeft = rect.left;
       initialTop = rect.top;
       panel.style.right = 'auto';
+      panel.style.bottom = 'auto';
       panel.style.left = `${initialLeft}px`;
       panel.style.top = `${initialTop}px`;
       document.addEventListener('mousemove', onMouseMove);
@@ -1122,14 +1138,36 @@ class SroHudController {
       const hpTextEl = this.shadowRoot.getElementById('sro-target-hp-text');
       const hpBarEl = this.shadowRoot.getElementById('sro-target-hp-bar');
 
-      if (telemetry.target.hasTarget && !telemetry.target.isDead) {
+      // Dynamic Island Minimized HUD Updates
+      const miniName = this.shadowRoot.getElementById('sro-mini-target-name');
+      const miniHp = this.shadowRoot.getElementById('sro-mini-target-hp');
+      const miniApm = this.shadowRoot.getElementById('sro-mini-apm');
+      const miniDrops = this.shadowRoot.getElementById('sro-mini-drops');
+
+      if (miniApm) miniApm.innerText = this.engine.stats?.apm || 0;
+      if (miniDrops) miniDrops.innerText = this.engine.stats?.dropsCollected || 0;
+
+      if (telemetry.target?.hasTarget && !telemetry.target.isDead) {
         if (targetNameEl) targetNameEl.innerHTML = `<span>🎯</span> <span>${telemetry.target.name} (Lv:${telemetry.target.level || '?'})</span>`;
         if (hpTextEl) hpTextEl.innerText = `%${telemetry.target.hpPercent}`;
         if (hpBarEl) hpBarEl.style.width = `${telemetry.target.hpPercent}%`;
+
+        if (miniName) miniName.innerText = telemetry.target.name || 'Canavar';
+        if (miniHp) {
+          const hp = telemetry.target.hpPercent != null ? telemetry.target.hpPercent : 100;
+          miniHp.innerText = `%${hp}`;
+          miniHp.style.color = hp > 50 ? '#22c55e' : (hp > 25 ? '#f59e0b' : '#ef4444');
+        }
       } else {
         if (targetNameEl) targetNameEl.innerHTML = `<span>🎯</span> <span>Hedef: [Yok / Aranıyor]</span>`;
         if (hpTextEl) hpTextEl.innerText = `%0`;
         if (hpBarEl) hpBarEl.style.width = `0%`;
+
+        if (miniName) miniName.innerText = (this.engine.state === 'SEARCHING' || this.engine.state === 'WALKING') ? 'Aranıyor...' : 'Hedef Yok';
+        if (miniHp) {
+          miniHp.innerText = '—';
+          miniHp.style.color = '#94a3b8';
+        }
       }
     };
   }

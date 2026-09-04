@@ -397,13 +397,47 @@
       }
     }
 
+    // Auto Windup - Party Assist & Player Attack
+    if (type === 'auto.windup' && data) {
+      if (data.id === localPlayerId || !localPlayerId) {
+        if (data.targetId) {
+          gameState.target.id = data.targetId;
+          gameState.target.hasTarget = true;
+          gameState.target.isDead = false;
+          gameState.target.lastSeen = Date.now();
+        }
+      }
+      if (gameState.settings?.assistMemberName && gameState.party?.members) {
+        const assistMember = gameState.party.members.find(m => m.name && m.name.toLowerCase() === gameState.settings.assistMemberName.toLowerCase());
+        if (assistMember && data.id === assistMember.entityId) {
+          const isPartyMember = gameState.party.members.some(m => m.entityId === data.targetId);
+          if (data.targetId && data.targetId !== localPlayerId && !isPartyMember) {
+            gameState.assistTargetId = data.targetId;
+            const mInfo = gameState.monsters?.get(data.targetId);
+            notifyContentScript('PARTY_ASSIST_TARGET', {
+              targetId: data.targetId,
+              memberName: assistMember.name,
+              targetName: mInfo?.name || 'Canavar',
+              targetX: mInfo?.x,
+              targetZ: mInfo?.z,
+              hpCurrent: mInfo?.hp,
+              hpMax: mInfo?.maxHp
+            });
+          }
+        }
+      }
+    }
+
     // Cast Start - Capture exact target entity ID & Party Assist
     if (type === 'cast.start' && data) {
-      if (data.targetId && (data.id === localPlayerId || !localPlayerId)) {
-        gameState.target.id = data.targetId;
-        gameState.target.hasTarget = true;
-        gameState.target.isDead = false;
-        gameState.target.lastSeen = Date.now();
+      if (data.id === localPlayerId || !localPlayerId) {
+        if (data.targetId) {
+          gameState.target.id = data.targetId;
+          gameState.target.hasTarget = true;
+          gameState.target.isDead = false;
+          gameState.target.lastSeen = Date.now();
+        }
+        notifyContentScript('PLAYER_CAST_START', { castMs: data.castMs || 1200, groupId: data.groupId });
       }
 
       // Assist tracking on cast (filter out friendly buffs/heals on party members!)
