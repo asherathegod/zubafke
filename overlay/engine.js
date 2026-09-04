@@ -5,7 +5,10 @@
  */
 
 class SroBotEngine {
-  constructor(keyDispatcher, clickDispatcher, packetDispatcher, weaponDispatcher, assistConfigDispatcher, targetDispatcher, clearTargetDispatcher) {
+  constructor(keyDispatcher, clickDispatcher, packetDispatcher, weaponDispatcher, assistConfigDispatcher, targetDispatcher, clearTargetDispatcher, speedScrollDispatcher) {
+    this.speedScrollDispatcher = speedScrollDispatcher || (() => {
+      window.postMessage({ source: 'sro-bot-content', type: 'USE_SPEED_SCROLL' }, '*');
+    });
     this.keyDispatcher = keyDispatcher || ((key, duration) => {
       window.postMessage({ source: 'sro-bot-content', type: 'DISPATCH_KEY', payload: { key, duration } }, '*');
     });
@@ -41,6 +44,9 @@ class SroBotEngine {
     this.running = false;
     this.paused = false;
     this.state = 'IDLE';
+
+    this.lastSpeedScrollUsedTime = 0;
+    this.speedScrollDurationMs = 3600000; // 60 min for Beginner scroll of movement
 
     // Live Telemetry
     this.telemetry = {
@@ -112,7 +118,8 @@ class SroBotEngine {
         autoWeaponSwap: false,
         mainWeapon: "auto",
         buffWeapon: "cleric",
-        equipShield: true
+        equipShield: true,
+        autoSpeedScroll: true
       },
       buffList: [
         { id: "b_imbue", name: "Silah İmbue", enabled: true, page: "current", slot: "5", intervalSec: 16, targetType: "self", partyMemberName: "", weaponReq: "none", castDelayMs: 350 },
@@ -692,14 +699,10 @@ class SroBotEngine {
               this.telemetry.target.name = `[Assist] ${this.telemetry.assistTarget.memberName || memberName}`;
               this.telemetry.target.hpPercent = 100;
 
-              // Legitimate attack command: Move to target and attack
+              // Target assist mob cleanly without forcing melee walk-up
               this.targetDispatcher({ id: targetMobId });
-              this.sendGamePacket({
-                t: 'combat.attack',
-                d: { id: targetMobId }
-              });
               this.log('TARGET', `🎯 Parti Üyesi [${memberName}] hedefine kilitlenildi (ID: ${targetMobId})`, 'success');
-              await this.sleep(250);
+              await this.sleep(150);
             } else {
               // No mob to attack right now: Follow the designated party member!
               this.traceSpecificMember(memberName);
@@ -774,7 +777,7 @@ class SroBotEngine {
 
     let initialHp = this.telemetry.target.hpPercent || 100;
     let lastSeenHp = initialHp;
-    const engagementStart = Date.now();
+    let engagementStart = Date.now();
     let lastDamageDealtTime = engagementStart;
 
     const giantStallTimeoutMs = (this.config.targeting.mobStallTimeoutSec || 35) * 1000;
@@ -901,8 +904,38 @@ class SroBotEngine {
       if (this.running && !this.paused) {
         this.checkAndExecuteDynamicBuffs();
         this.checkAndUpgradeMasteries();
+        this.checkAndUseSpeedScroll();
       }
     }, 1000);
+  }
+
+  checkAndUseSpeedScroll() {
+    if (!this.config.buffs || this.config.buffs.autoSpeedScroll === false) return;
+    const now = Date.now();
+
+    if (now - this.lastSpeedScrollUsedTime < 5000) return;
+
+    // Check if player has active speed buff from server
+    const buffs = this.telemetry.player.buffs || [];
+    const hasActiveSpeed = buffs.some(b => {
+      if (!b) return false;
+      const gId = (b.groupId || b.skillId || "").toLowerCase();
+      const cat = (b.category || "").toLowerCase();
+      const isSpeed = gId.includes('speed') || gId.includes('movement') || (cat === 'stat' && b.mods?.moveSpeedPct > 0);
+      if (!isSpeed) return false;
+      if (b.expiresAt && b.expiresAt <= now) return false;
+      return true;
+    });
+
+    if (hasActiveSpeed) return;
+
+    // If no buff list received yet, fallback to local duration timer
+    if (buffs.length === 0 && this.lastSpeedScrollUsedTime > 0 && (now - this.lastSpeedScrollUsedTime < this.speedScrollDurationMs)) {
+      return;
+    }
+
+    this.lastSpeedScrollUsedTime = now;
+    this.speedScrollDispatcher();
   }
 
   startPartyTraceTicker() {

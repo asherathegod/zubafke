@@ -207,6 +207,17 @@ class SroHudController {
           <!-- ========================================================= -->
           <div id="tab-buffs" class="sro-tab-pane">
             
+            <!-- ⚡ OTOMATİK HIZLI KOŞMA SCROLLU (SPEED SCROLL) -->
+            <div class="sro-field-group" style="background:rgba(56,189,248,0.12);padding:10px;border-radius:6px;border:1px solid rgba(56,189,248,0.3);margin-bottom:10px;">
+              <label class="sro-checkbox-label">
+                <input id="cfg-auto-speed-scroll-enable" type="checkbox" checked>
+                <strong style="color:#38bdf8;">⚡ Otomatik Hızlı Koşma Scrollu Bas (Speed Scroll)</strong>
+              </label>
+              <div style="font-size:9px;color:#cbd5e1;margin-top:4px;">
+                *Çantadaki "Beginner scroll of movement" veya Hızlı Koşma İksirini otomatik basar. Yalnızca buff bittiğinde basar, israf etmez.*
+              </div>
+            </div>
+
             <!-- ⚔️ OTOMATİK SİLAH DEĞİŞİMİ (WEAPON SWAP) -->
             <div class="sro-field-group" style="background:rgba(139,92,246,0.12);padding:10px;border-radius:6px;border:1px solid rgba(168,85,247,0.35);">
               <label class="sro-checkbox-label">
@@ -350,7 +361,7 @@ class SroHudController {
               <div style="display:flex;justify-content:space-between;align-items:center;">
                 <div>
                   <strong style="color:#60a5fa;font-size:12px;">🚀 Bot Sürümü & Otomatik Güncelleme</strong>
-                  <div style="font-size:10px;color:#cbd5e1;margin-top:2px;">Mevcut Sürüm: <span style="color:#f1c40f;font-weight:bold;">v3.6.0 Pro</span></div>
+                  <div style="font-size:10px;color:#cbd5e1;margin-top:2px;">Mevcut Sürüm: <span style="color:#f1c40f;font-weight:bold;">v3.6.1 Pro</span></div>
                 </div>
                 <button id="btn-check-updates" class="sro-btn sro-btn-primary" style="font-size:10px;padding:4px 10px;">🔄 Güncellemeleri Denetle</button>
               </div>
@@ -445,6 +456,20 @@ class SroHudController {
               </div>
               <div id="sro-uniques-list" style="max-height:90px;overflow-y:auto;background:rgba(0,0,0,0.25);border-radius:4px;padding:6px;font-size:11px;">
                 <div style="color:#64748b;text-align:center;">Boss zamanları taranıyor...</div>
+              </div>
+            </div>
+
+            <!-- 📦 CANLI PAKET YAKALAYICI (PACKET HARVESTER) -->
+            <div class="sro-field-group" style="margin-top:10px;border-top:1px solid rgba(255,255,255,0.08);padding-top:10px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                <strong style="color:#a855f7;font-size:12px;">📦 Canlı Paket Yakalayıcı (Packet Harvester)</strong>
+                <div style="display:flex;gap:4px;">
+                  <button id="btn-clear-packets" class="sro-icon-btn" style="font-size:10px;">Temizle 🗑️</button>
+                  <button id="btn-copy-packets" class="sro-icon-btn" style="font-size:10px;background:#8b5cf6;color:#fff;font-weight:bold;">Kopyala 📋</button>
+                </div>
+              </div>
+              <div id="sro-packet-list" style="max-height:130px;overflow-y:auto;background:#090d16;border-radius:4px;padding:6px;font-family:monospace;font-size:10px;border:1px solid rgba(255,255,255,0.08);color:#94a3b8;">
+                <div style="color:#64748b;text-align:center;">Paketler dinleniyor...</div>
               </div>
             </div>
 
@@ -759,6 +784,50 @@ class SroHudController {
       this.engine.config.buffs.equipShield = $('cfg-swap-shield-enable').checked;
       this.saveSettings();
     };
+
+    // Speed Scroll
+    if ($('cfg-auto-speed-scroll-enable')) {
+      $('cfg-auto-speed-scroll-enable').onchange = () => {
+        if (!this.engine.config.buffs) this.engine.config.buffs = {};
+        this.engine.config.buffs.autoSpeedScroll = $('cfg-auto-speed-scroll-enable').checked;
+        this.saveSettings();
+      };
+    }
+
+    // Packet Harvester Clear & Copy
+    const btnClearPackets = $('btn-clear-packets');
+    if (btnClearPackets) {
+      btnClearPackets.onclick = () => {
+        this.engine.telemetry.capturedPackets = [];
+        const pList = $('sro-packet-list');
+        if (pList) pList.innerHTML = '<div style="color:#64748b;text-align:center;">Paketler temizlendi.</div>';
+        this.engine.log('TOOL', 'Paket listesi temizlendi.', 'info');
+      };
+    }
+
+    const btnCopyPackets = $('btn-copy-packets');
+    if (btnCopyPackets) {
+      btnCopyPackets.onclick = async () => {
+        const packets = this.engine.telemetry.capturedPackets || [];
+        const json = JSON.stringify(packets, null, 2);
+        try {
+          await navigator.clipboard.writeText(json);
+          btnCopyPackets.innerText = 'Kopyalandı! ✅';
+          setTimeout(() => { btnCopyPackets.innerText = 'Kopyala 📋'; }, 2000);
+          this.engine.log('TOOL', `📋 ${packets.length} adet paket panoya kopyalandı!`, 'success');
+        } catch (e) {
+          const ta = document.createElement('textarea');
+          ta.value = json;
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          ta.remove();
+          btnCopyPackets.innerText = 'Kopyalandı! ✅';
+          setTimeout(() => { btnCopyPackets.innerText = 'Kopyala 📋'; }, 2000);
+          this.engine.log('TOOL', `📋 ${packets.length} adet paket panoya kopyalandı!`, 'success');
+        }
+      };
+    }
 
     // Auto Res & Accept
     $('cfg-auto-res-enable').onchange = () => {
@@ -1178,6 +1247,11 @@ class SroHudController {
     if ($('cfg-weapon-swap-enable')) $('cfg-weapon-swap-enable').checked = !!cfg.buffs?.autoWeaponSwap;
     if ($('cfg-main-weapon-type')) $('cfg-main-weapon-type').value = cfg.buffs?.mainWeapon || 'auto';
     if ($('cfg-swap-shield-enable')) $('cfg-swap-shield-enable').checked = cfg.buffs?.equipShield !== false;
+
+    // Speed Scroll
+    if ($('cfg-auto-speed-scroll-enable')) {
+      $('cfg-auto-speed-scroll-enable').checked = cfg.buffs?.autoSpeedScroll !== false;
+    }
 
     // Res
     if ($('cfg-auto-res-enable')) $('cfg-auto-res-enable').checked = !!cfg.party?.autoResEnabled;

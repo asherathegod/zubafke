@@ -245,6 +245,21 @@
       }
     }
 
+    // Buffs Update directly from server
+    if (type === 'buffs.update' && data) {
+      if (data.id === localPlayerId || !localPlayerId) {
+        gameState.player.buffs = data.buffs || [];
+        notifyContentScript('BUFFS_UPDATED', { buffs: gameState.player.buffs });
+      }
+    }
+
+    if (type === 'state.delta' && data) {
+      if (data.buffs && (data.id === localPlayerId || !localPlayerId)) {
+        gameState.player.buffs = data.buffs;
+        notifyContentScript('BUFFS_UPDATED', { buffs: gameState.player.buffs });
+      }
+    }
+
     // Party Update directly from server
     if (type === 'party.update' && data) {
       gameState.party = data;
@@ -869,6 +884,77 @@
     return false;
   }
 
+  /* =========================================================================
+   * 7. SPEED SCROLL & TARGET STORE HELPERS
+   * ========================================================================= */
+  function findSpeedScrollInBag() {
+    const bag = gameState.player.inventory?.bag || [];
+    for (let slot = 0; slot < bag.length; slot++) {
+      const item = bag[slot];
+      if (!item || !item.itemId) continue;
+      const id = (item.itemId || "").toLowerCase();
+      const name = (item.name || "").toLowerCase();
+      if (
+        id === 'speed_potion_01' ||
+        id.startsWith('speed_potion') ||
+        id.includes('speed') ||
+        id.includes('movement') ||
+        name.includes('scroll of movement') ||
+        name.includes('speed potion') ||
+        name.includes('drug of typhoon')
+      ) {
+        return { slot, item };
+      }
+    }
+    return null;
+  }
+
+  function findZustandTargetStore() {
+    if (window.__SRO_TARGET_STORE__) return window.__SRO_TARGET_STORE__;
+    try {
+      const root = document.querySelector('#root') || document.body;
+      if (!root) return null;
+      const fiberKey = Object.keys(root).find(k => k.startsWith('__reactFiber') || k.startsWith('__reactContainer'));
+      if (!fiberKey) return null;
+
+      const stack = [root[fiberKey]];
+      const visited = new Set();
+      let iterations = 0;
+
+      while (stack.length > 0 && iterations < 2500) {
+        iterations++;
+        const fiber = stack.pop();
+        if (!fiber || visited.has(fiber)) continue;
+        visited.add(fiber);
+
+        let hook = fiber.memoizedState;
+        while (hook) {
+          if (hook.memoizedState && typeof hook.memoizedState === 'object') {
+            if (typeof hook.memoizedState.setTarget === 'function') {
+              window.__SRO_TARGET_STORE__ = hook.memoizedState;
+              return window.__SRO_TARGET_STORE__;
+            }
+          }
+          hook = hook.next;
+        }
+
+        if (fiber.memoizedProps) {
+          for (const key of Object.keys(fiber.memoizedProps)) {
+            const val = fiber.memoizedProps[key];
+            if (val && typeof val.setTarget === 'function') {
+              window.__SRO_TARGET_STORE__ = val;
+              return window.__SRO_TARGET_STORE__;
+            }
+          }
+        }
+
+        if (fiber.child) stack.push(fiber.child);
+        if (fiber.sibling) stack.push(fiber.sibling);
+      }
+    } catch (e) {}
+    return null;
+  }
+
   function notifyContentScript(type, payload) {
     window.postMessage({
       source: 'sro-bot-inpage',
@@ -897,12 +983,34 @@
     } else if (type === 'SET_ASSIST_CONFIG') {
       if (payload?.assistMemberName !== undefined) gameState.settings.assistMemberName = payload.assistMemberName;
       if (payload?.autoAcceptRes !== undefined) gameState.settings.autoAcceptRes = payload.autoAcceptRes;
+    } else if (type === 'USE_SPEED_SCROLL') {
+      const found = findSpeedScrollInBag();
+      if (found) {
+        console.log(`%c[Silkroad Bot Pro] ⚡ Hızlı Koşma Scrollu Basılıyor: Slot ${found.slot} (${found.item.name || found.item.itemId})`, "color:#38bdf8;font-weight:bold;");
+        sendPacket({
+          t: 'inv.use',
+          d: { bagSlot: found.slot }
+        });
+        notifyContentScript('SPEED_SCROLL_USED', { slot: found.slot, item: found.item });
+      }
     } else if (type === 'SET_TARGET_ENTITY') {
       if (payload?.id) {
-        sendPacket({ t: 'combat.attack', d: { id: payload.id } });
+        gameState.target.id = payload.id;
+        gameState.target.hasTarget = true;
+        gameState.target.isDead = false;
+        try {
+          const store = findZustandTargetStore();
+          if (store?.setTarget) {
+            store.setTarget(payload.id);
+          }
+        } catch (e) {}
       }
     } else if (type === 'CLEAR_TARGET') {
       sendPacket({ t: 'combat.stop', d: {} });
+      try {
+        const store = findZustandTargetStore();
+        if (store?.setTarget) store.setTarget(null);
+      } catch (e) {}
       simulateKeyPress('Escape', 50);
     }
   });

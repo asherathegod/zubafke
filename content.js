@@ -92,6 +92,13 @@
     }, '*');
   };
 
+  const speedScrollDispatcher = () => {
+    window.postMessage({
+      source: 'sro-bot-content',
+      type: 'USE_SPEED_SCROLL'
+    }, '*');
+  };
+
   try {
     const engine = new window.SroBotEngine(
       keyDispatcher,
@@ -100,7 +107,8 @@
       weaponDispatcher,
       assistConfigDispatcher,
       targetDispatcher,
-      clearTargetDispatcher
+      clearTargetDispatcher,
+      speedScrollDispatcher
     );
     const hud = new window.SroHudController(shadowRoot, engine);
 
@@ -118,6 +126,12 @@
         engine.handleTooManyRequests(payload?.reason);
       } else if (type === 'REVIVE_ACCEPTED') {
         engine.log('PARTY', `✝️ Canlandırma teklifi otomatik kabul edildi! (Auto Res Accept)`, 'success');
+      } else if (type === 'BUFFS_UPDATED') {
+        if (payload?.buffs) {
+          engine.telemetry.player.buffs = payload.buffs;
+        }
+      } else if (type === 'SPEED_SCROLL_USED') {
+        engine.log('BUFF', `⚡ Hızlı Koşma Scrollu Basıldı: [${payload.item?.name || payload.item?.itemId || 'Speed Scroll'}] (Slot: ${payload.slot})`, 'success');
       } else if (type === 'PARTY_ASSIST_TARGET') {
         if (payload?.targetId) {
           engine.handlePartyAssistTarget(payload.targetId, payload.memberName);
