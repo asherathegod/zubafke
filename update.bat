@@ -1,5 +1,3 @@
-@echo off
-echo [Silkroad Macro Bot Pro] Guncellemeler denetleniyor...
-git pull origin main
-echo Guncelleme tamamlandi! Chrome eklentiler sayfasindan (chrome://extensions) Yenile simgesine basabilirsiniz.
-pause
+@echo off
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0update.ps1"
+pause
