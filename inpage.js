@@ -315,7 +315,8 @@
       if (gameState.settings?.assistMemberName && gameState.party?.members) {
         const assistMember = gameState.party.members.find(m => m.name && m.name.toLowerCase() === gameState.settings.assistMemberName.toLowerCase());
         if (assistMember && (data.src === assistMember.entityId || data.srcId === assistMember.entityId)) {
-          if (data.dst && data.dst !== localPlayerId) {
+          const isPartyMember = gameState.party.members.some(m => m.entityId === data.dst);
+          if (data.dst && data.dst !== localPlayerId && !isPartyMember) {
             gameState.assistTargetId = data.dst;
             notifyContentScript('PARTY_ASSIST_TARGET', { targetId: data.dst, memberName: assistMember.name });
           }
@@ -329,11 +330,12 @@
         gameState.target.id = data.targetId;
       }
 
-      // Assist tracking on cast
+      // Assist tracking on cast (filter out friendly buffs/heals on party members!)
       if (gameState.settings?.assistMemberName && gameState.party?.members) {
         const assistMember = gameState.party.members.find(m => m.name && m.name.toLowerCase() === gameState.settings.assistMemberName.toLowerCase());
         if (assistMember && data.id === assistMember.entityId) {
-          if (data.targetId && data.targetId !== localPlayerId) {
+          const isPartyMember = gameState.party.members.some(m => m.entityId === data.targetId);
+          if (data.targetId && data.targetId !== localPlayerId && !isPartyMember) {
             gameState.assistTargetId = data.targetId;
             notifyContentScript('PARTY_ASSIST_TARGET', { targetId: data.targetId, memberName: assistMember.name });
           }
@@ -341,12 +343,13 @@
       }
     }
 
-    // Skill Fire - Assist tracking
+    // Skill Fire - Assist tracking (filter out friendly buffs/heals on party members!)
     if (type === 'skill.fire' && data) {
       if (gameState.settings?.assistMemberName && gameState.party?.members) {
         const assistMember = gameState.party.members.find(m => m.name && m.name.toLowerCase() === gameState.settings.assistMemberName.toLowerCase());
         if (assistMember && data.id === assistMember.entityId) {
-          if (data.targetId && data.targetId !== localPlayerId) {
+          const isPartyMember = gameState.party.members.some(m => m.entityId === data.targetId);
+          if (data.targetId && data.targetId !== localPlayerId && !isPartyMember) {
             gameState.assistTargetId = data.targetId;
             notifyContentScript('PARTY_ASSIST_TARGET', { targetId: data.targetId, memberName: assistMember.name });
           }

@@ -47,6 +47,8 @@ class SroBotEngine {
 
     this.lastSpeedScrollUsedTime = 0;
     this.speedScrollDurationMs = 3600000; // 60 min for Beginner scroll of movement
+    this.lastStatAllocateTime = 0;
+    this.lastMasteryUpgradeTime = 0;
 
     // Live Telemetry
     this.telemetry = {
@@ -260,6 +262,10 @@ class SroBotEngine {
     const unspent = this.telemetry.player.unspentStats || 0;
     if (unspent <= 0) return;
 
+    const now = Date.now();
+    if (now - this.lastStatAllocateTime < 5000) return; // Prevent spamming server
+    this.lastStatAllocateTime = now;
+
     const build = this.config.autoProgression.statBuild || 'pure_int';
     let strToAdd = 0;
     let intToAdd = 0;
@@ -276,26 +282,29 @@ class SroBotEngine {
       intToAdd = unspent - strToAdd;
     }
 
-    if (strToAdd > 0) {
-      this.sendGamePacket({ t: 'stat.add', d: { stat: 'str', amount: strToAdd } });
-      this.log('STAT', `🧬 Otomatik STR Eklendi: +${strToAdd} (Build: ${build})`, 'success');
-    }
-    if (intToAdd > 0) {
-      this.sendGamePacket({ t: 'stat.add', d: { stat: 'int', amount: intToAdd } });
-      this.log('STAT', `🧬 Otomatik INT Eklendi: +${intToAdd} (Build: ${build})`, 'success');
-    }
+    // Official game packet: stats.allocate { str, int }
+    this.sendGamePacket({
+      t: 'stats.allocate',
+      d: { str: strToAdd, int: intToAdd }
+    });
+    this.log('STAT', `🧬 Stat Dağıtıldı: +${intToAdd} INT, +${strToAdd} STR (Kalan: ${unspent})`, 'success');
 
     this.telemetry.player.unspentStats = 0;
   }
 
   checkAndUpgradeMasteries() {
     if (!this.config.autoProgression?.autoMasteryEnabled) return;
+    const now = Date.now();
+    if (now - this.lastMasteryUpgradeTime < 6000) return; // Prevent spamming server
+    this.lastMasteryUpgradeTime = now;
+
     const masteries = this.config.autoProgression.masteries || {};
     const selectedMasteries = Object.keys(masteries).filter(m => masteries[m]);
     if (selectedMasteries.length === 0) return;
 
+    // Official game packet: mastery.raise { masteryId }
     for (const mId of selectedMasteries) {
-      this.sendGamePacket({ t: 'mastery.levelUp', d: { masteryId: mId } });
+      this.sendGamePacket({ t: 'mastery.raise', d: { masteryId: mId } });
     }
   }
 
@@ -444,6 +453,10 @@ class SroBotEngine {
 
   traceSpecificMember(memberName) {
     if (!memberName) return;
+    // PAUSE movement during combat: in Silkroad moving cancels skill cast animations!
+    if (this.state === 'ATTACKING' || (this.telemetry.target.hasTarget && !this.telemetry.target.isDead)) {
+      return;
+    }
     const members = this.telemetry.party?.members || [];
     const targetMember = members.find(m => m.name && m.name.toLowerCase() === memberName.trim().toLowerCase());
     if (!targetMember || targetMember.dead) return;
@@ -473,6 +486,10 @@ class SroBotEngine {
 
   checkAndExecuteAutoTrace() {
     if (!this.config.party?.autoTraceEnabled) return;
+    // PAUSE movement during combat: in Silkroad moving cancels skill cast animations!
+    if (this.state === 'ATTACKING' || (this.telemetry.target.hasTarget && !this.telemetry.target.isDead)) {
+      return;
+    }
     const targetName = (this.config.party.traceTargetName || "").trim().toLowerCase();
     if (!targetName) return;
 
@@ -509,6 +526,11 @@ class SroBotEngine {
     if (this.blacklistedTargets.has(targetId) && Date.now() < this.blacklistedTargets.get(targetId)) {
       return; // Skip blacklisted/stuck target
     }
+    // NEVER target a party member or self (friendly buffs/heals trigger targetId)
+    if (targetId === this.telemetry.player?.id) return;
+    const isPartyMember = this.telemetry.party?.members?.some(m => m.entityId === targetId);
+    if (isPartyMember) return;
+
     this.telemetry.assistTarget = {
       targetId: targetId,
       memberName: memberName,
@@ -690,6 +712,14 @@ class SroBotEngine {
               if (this.blacklistedTargets.has(targetMobId)) {
                 this.telemetry.assistTarget = null;
                 await this.sleep(300);
+                continue;
+              }
+
+              // Verify target is NOT a party member or self
+              const isPartyMember = this.telemetry.party?.members?.some(m => m.entityId === targetMobId);
+              if (isPartyMember || targetMobId === this.telemetry.player?.id) {
+                this.telemetry.assistTarget = null;
+                await this.sleep(250);
                 continue;
               }
 
