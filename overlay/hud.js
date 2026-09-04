@@ -42,7 +42,7 @@ class SroHudController {
           <div class="sro-title-box">
             <span style="font-size:16px;">⚔️</span>
             <span class="sro-title">Silkroad Macro Bot Pro</span>
-            <span style="font-size:10px;background:#b45309;color:#fff;padding:1px 5px;border-radius:3px;font-weight:bold;">v3.6.6 Pro</span>
+            <span style="font-size:10px;background:#b45309;color:#fff;padding:1px 5px;border-radius:3px;font-weight:bold;">v3.6.7 Pro</span>
           </div>
           <div class="sro-header-controls">
             <button id="sro-minimize-btn" class="sro-icon-btn" title="Simge Durumuna Küçült">—</button>
@@ -140,7 +140,10 @@ class SroHudController {
                   <input id="cfg-range-enable" type="checkbox" checked>
                   <strong style="color:#10b981;">📍 Kasılma Alanı Sınırı (Range Limit)</strong>
                 </label>
-                <button id="btn-set-center" class="sro-btn sro-btn-secondary" style="font-size:10px;padding:3px 8px;">📍 Konumu Merkez Yap</button>
+                <div>
+                  <button id="btn-set-center" class="sro-btn sro-btn-secondary" style="font-size:10px;padding:3px 8px;">📍 Konumu Merkez Yap</button>
+                  <button id="btn-reset-center" class="sro-btn sro-btn-danger" style="font-size:10px;padding:3px 8px;margin-left:4px;" title="Merkezi Temizle">🗑️ Sıfırla</button>
+                </div>
               </div>
 
               <div class="sro-row" style="margin-top:6px;align-items:center;">
@@ -149,8 +152,9 @@ class SroHudController {
               </div>
 
               <div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;font-size:11px;color:#cbd5e1;">
-                <span>Merkez: <strong id="lbl-center-coords" style="color:#38bdf8;">(Oto Belirlenecek)</strong></span>
-                <span>Uzaklık: <strong id="lbl-current-dist" style="color:#f1c40f;">0m</strong></span>
+                <span>Konum: <strong id="lbl-current-pos" style="color:#cbd5e1;">?</strong></span>
+                <span>Merkez: <strong id="lbl-center-coords" style="color:#38bdf8;">(Ayarlanmadı)</strong></span>
+                <span>Uzaklık: <strong id="lbl-current-dist" style="color:#10b981;">0m</strong></span>
               </div>
 
               <div style="font-size:9px;color:#94a3b8;margin-top:4px;">
@@ -361,7 +365,7 @@ class SroHudController {
               <div style="display:flex;justify-content:space-between;align-items:center;">
                 <div>
                   <strong style="color:#60a5fa;font-size:12px;">🚀 Bot Sürümü & Otomatik Güncelleme</strong>
-                  <div style="font-size:10px;color:#cbd5e1;margin-top:2px;">Mevcut Sürüm: <span style="color:#f1c40f;font-weight:bold;">v3.6.6 Pro</span></div>
+                  <div style="font-size:10px;color:#cbd5e1;margin-top:2px;">Mevcut Sürüm: <span style="color:#f1c40f;font-weight:bold;">v3.6.7 Pro</span></div>
                 </div>
                 <button id="btn-check-updates" class="sro-btn sro-btn-primary" style="font-size:10px;padding:4px 10px;">🔄 Güncellemeleri Denetle</button>
               </div>
@@ -638,20 +642,28 @@ class SroHudController {
   updateLiveRangeUI() {
     const lblDist = this.shadowRoot.getElementById('lbl-current-dist');
     const lblCenter = this.shadowRoot.getElementById('lbl-center-coords');
+    const lblPos = this.shadowRoot.getElementById('lbl-current-pos');
     if (!lblDist || !lblCenter) return;
 
+    const p = this.engine.telemetry.player;
+    if (lblPos) {
+      lblPos.innerText = (p.x != null && p.z != null) ? `(${Math.round(p.x)}, ${Math.round(p.z)})` : '?';
+    }
+
     const hunting = this.engine.config.hunting;
-    if (hunting?.centerX != null) {
+    if (hunting?.centerX != null && !(hunting.centerX === 0 && hunting.centerZ === 0)) {
       lblCenter.innerText = `(${hunting.centerX}, ${hunting.centerZ})`;
-      const p = this.engine.telemetry.player;
-      if (p.x && p.z) {
+      if (p.x != null && p.z != null) {
         const dist = Math.round(Math.hypot(p.x - hunting.centerX, p.z - hunting.centerZ));
         lblDist.innerText = `${dist}m / ${hunting.radius || 35}m`;
-        lblDist.style.color = dist > (hunting.radius || 35) ? '#ef4444' : '#f1c40f';
+        lblDist.style.color = dist > (hunting.radius || 35) ? '#ef4444' : '#10b981';
+      } else {
+        lblDist.innerText = `? / ${hunting.radius || 35}m`;
       }
     } else {
-      lblCenter.innerText = '(Oto Belirlenecek)';
+      lblCenter.innerText = '(Ayarlanmadı)';
       lblDist.innerText = '0m';
+      lblDist.style.color = '#94a3b8';
     }
   }
 
@@ -732,10 +744,17 @@ class SroHudController {
       this.saveSettings();
     };
     $('btn-set-center').onclick = () => {
-      this.engine.setHuntingCenter();
+      const ok = this.engine.setHuntingCenter();
       this.updateLiveRangeUI();
-      this.saveSettings();
+      if (ok) this.saveSettings();
     };
+    if ($('btn-reset-center')) {
+      $('btn-reset-center').onclick = () => {
+        this.engine.resetHuntingCenter();
+        this.updateLiveRangeUI();
+        this.saveSettings();
+      };
+    }
 
     // Target Assist
     $('cfg-party-assist-enable').onchange = () => {
@@ -1263,6 +1282,10 @@ class SroHudController {
       const raw = localStorage.getItem('sro_macro_bot_settings_v4') || localStorage.getItem('sro_macro_bot_settings_v3');
       if (raw) {
         const saved = JSON.parse(raw);
+        if (saved.hunting?.centerX === 0 && saved.hunting?.centerZ === 0) {
+          saved.hunting.centerX = null;
+          saved.hunting.centerZ = null;
+        }
         Object.assign(this.engine.config, saved);
         this.applyConfigToForm();
         this.renderDynamicBuffList();

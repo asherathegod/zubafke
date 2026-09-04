@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Silkroad Web Macro Bot Pro",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "Tarayıcı tabanlı Silkroad için gelişmiş otomatik skill rotasyonu, auto-target, buff, loot ve macro botu.",
   "permissions": [
     "storage",

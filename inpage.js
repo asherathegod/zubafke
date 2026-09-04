@@ -359,6 +359,9 @@
     // Combat Event - Track target damage, 0 HP death, & Party Member Assist
     if (type === 'combat.event' && data) {
       if (gameState.target.id && data.dst === gameState.target.id) {
+        gameState.target.hasTarget = true;
+        gameState.target.isDead = false;
+        gameState.target.lastSeen = Date.now();
         if (data.dstHp !== undefined) {
           gameState.target.hpCurrent = data.dstHp;
           if (gameState.target.hpMax > 0) {
@@ -398,6 +401,9 @@
     if (type === 'cast.start' && data) {
       if (data.targetId && (data.id === localPlayerId || !localPlayerId)) {
         gameState.target.id = data.targetId;
+        gameState.target.hasTarget = true;
+        gameState.target.isDead = false;
+        gameState.target.lastSeen = Date.now();
       }
 
       // Assist tracking on cast (filter out friendly buffs/heals on party members!)
@@ -631,7 +637,7 @@
       for (const el of allTextNodes) {
         if (el.children.length === 0 && el.innerText) {
           const txt = el.innerText.trim();
-          const coordMatch = txt.match(/^(\d{3,6})\s*,\s*(\d{3,6})$/);
+          const coordMatch = txt.match(/^(-?\d{1,7})\s*,\s*(-?\d{1,7})$/);
           if (coordMatch) {
             gameState.player.x = parseInt(coordMatch[1], 10);
             gameState.player.z = parseInt(coordMatch[2], 10);
@@ -1173,6 +1179,9 @@
         gameState.target.id = payload.id;
         gameState.target.hasTarget = true;
         gameState.target.isDead = false;
+        gameState.target.lastSeen = Date.now();
+        if (payload.hpPercent != null) gameState.target.hpPercent = payload.hpPercent;
+        if (payload.name) gameState.target.name = payload.name;
         try {
           const store = findZustandTargetStore();
           if (store?.setTarget) {

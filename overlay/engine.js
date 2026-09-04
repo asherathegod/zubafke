@@ -209,9 +209,6 @@ class SroBotEngine {
     this.stats.actionsCount++;
     this.stats.actionTimestamps.push(Date.now());
     this.lastActionOrProgressTime = Date.now();
-    this.buffTickerInterval = null;
-    this.apmTickerInterval = null;
-    this.partyTraceInterval = null;
     this.keyDispatcher(key, durationMs);
   }
 
@@ -220,11 +217,24 @@ class SroBotEngine {
   }
 
   setHuntingCenter(x, z) {
-    const curX = Math.round(x ?? this.telemetry.player.x ?? 0);
-    const curZ = Math.round(z ?? this.telemetry.player.z ?? 0);
+    let curX = x != null ? Math.round(x) : (this.telemetry.player.x != null ? Math.round(this.telemetry.player.x) : null);
+    let curZ = z != null ? Math.round(z) : (this.telemetry.player.z != null ? Math.round(this.telemetry.player.z) : null);
+
+    if (curX == null || curZ == null || (curX === 0 && curZ === 0)) {
+      this.log('RANGE', `⚠️ Karakter koordinatları henüz hazır değil. Oyunda birkaç adım atıp tekrar deneyin.`, 'warn');
+      return false;
+    }
+
     this.config.hunting.centerX = curX;
     this.config.hunting.centerZ = curZ;
     this.log('RANGE', `📍 Yeni Merkez Belirlendi: (${curX}, ${curZ})`, 'info');
+    return true;
+  }
+
+  resetHuntingCenter() {
+    this.config.hunting.centerX = null;
+    this.config.hunting.centerZ = null;
+    this.log('RANGE', `📍 Kasılma alanı merkezi sıfırlandı.`, 'info');
   }
 
   handleTooManyRequests(reason) {
@@ -682,7 +692,12 @@ class SroBotEngine {
       this.checkAndAllocateStats();
     }
     if (data.target) {
-      Object.assign(this.telemetry.target, data.target);
+      const isAssistActive = !!(this.config.party?.assistEnabled && this.config.party?.assistMemberName && this.telemetry.target.id && !this.telemetry.target.isDead && (Date.now() - (this.targetLastSeenTime || 0) < 5000));
+      if (isAssistActive && !data.target.hasTarget && data.target.isDead) {
+        // Protect assist target from being prematurely dropped by empty scrape
+      } else {
+        Object.assign(this.telemetry.target, data.target);
+      }
     }
     if (data.lastItemReceivedTime) {
       this.telemetry.lastItemReceivedTime = data.lastItemReceivedTime;
@@ -739,8 +754,10 @@ class SroBotEngine {
 
     // Set Hunting Center if not yet defined
     if (this.config.hunting?.centerX == null && this.telemetry.player.x && this.telemetry.player.z) {
-      this.config.hunting.centerX = Math.round(this.telemetry.player.x);
-      this.config.hunting.centerZ = Math.round(this.telemetry.player.z);
+      if (this.telemetry.player.x !== 0 || this.telemetry.player.z !== 0) {
+        this.config.hunting.centerX = Math.round(this.telemetry.player.x);
+        this.config.hunting.centerZ = Math.round(this.telemetry.player.z);
+      }
     }
 
     this.audio.setEnabled(this.config.alerts?.soundEnabled !== false);
@@ -829,27 +846,31 @@ class SroBotEngine {
         this.checkAndExecuteAutoRes();
 
         // 1. Range Check: If outside hunting radius, return to center!
-        if (this.config.hunting?.rangeEnabled && this.config.hunting?.centerX != null) {
+        const isAssist = !!(this.config.party?.assistEnabled && this.config.party?.assistMemberName);
+        if (!isAssist && this.config.hunting?.rangeEnabled && this.config.hunting?.centerX != null) {
           const p = this.telemetry.player;
-          if (p.x && p.z) {
-            const distToCenter = Math.hypot(p.x - this.config.hunting.centerX, p.z - this.config.hunting.centerZ);
-            const radius = this.config.hunting.radius || 35;
+          if (p.x != null && p.z != null) {
+            // Ignore invalid (0, 0) center coordinates
+            if (!(this.config.hunting.centerX === 0 && this.config.hunting.centerZ === 0)) {
+              const distToCenter = Math.hypot(p.x - this.config.hunting.centerX, p.z - this.config.hunting.centerZ);
+              const radius = this.config.hunting.radius || 35;
 
-            if (distToCenter > radius) {
-              this.log('RANGE', `📍 Kasılma alanından uzaklaşıldı (${Math.round(distToCenter)}m > ${radius}m). Merkeze dönülüyor...`, 'warn');
-              this.setState('WALKING');
-              this.sendGamePacket({
-                t: 'move.click',
-                d: { x: this.config.hunting.centerX, z: this.config.hunting.centerZ }
-              });
+              if (distToCenter > radius) {
+                this.log('RANGE', `📍 Kasılma alanından uzaklaşıldı (${Math.round(distToCenter)}m > ${radius}m). Merkeze dönülüyor...`, 'warn');
+                this.setState('WALKING');
+                this.sendGamePacket({
+                  t: 'move.click',
+                  d: { x: this.config.hunting.centerX, z: this.config.hunting.centerZ }
+                });
 
-              const walkStart = Date.now();
-              while (this.running && !this.paused && (Date.now() - walkStart < 5000)) {
-                await this.sleep(400);
-                const curDist = Math.hypot(this.telemetry.player.x - this.config.hunting.centerX, this.telemetry.player.z - this.config.hunting.centerZ);
-                if (curDist <= 6) break;
+                const walkStart = Date.now();
+                while (this.running && !this.paused && (Date.now() - walkStart < 5000)) {
+                  await this.sleep(400);
+                  const curDist = Math.hypot(this.telemetry.player.x - this.config.hunting.centerX, this.telemetry.player.z - this.config.hunting.centerZ);
+                  if (curDist <= 6) break;
+                }
+                continue;
               }
-              continue;
             }
           }
         }
@@ -895,44 +916,59 @@ class SroBotEngine {
               let fightX = assist.targetX ?? targetMember?.x;
               let fightZ = assist.targetZ ?? targetMember?.z;
 
+              // Dynamically adjust approach distance: 7m for ranged, 3.5m for melee
+              const isRanged = this.config.buffs?.mainWeapon === 'eu_tstaff' || this.config.buffs?.mainWeapon === 'bow' || (this.telemetry.skills?.discovered || []).some(s => (s.groupId || '').includes('firea') || (s.groupId || '').includes('colda') || (s.groupId || '').includes('lightninga') || (s.groupId || '').includes('pacheon'));
+              const desiredDist = isRanged ? 7 : 3.5;
+
               if (p.x != null && p.z != null && fightX != null && fightZ != null) {
                 const distToFight = Math.hypot(p.x - fightX, p.z - fightZ);
-                // If more than 13m away, move closer to combat area
-                if (distToFight > 13) {
+                // Move closer if farther than attack distance
+                if (distToFight > (desiredDist + 2)) {
                   this.setState('WALKING');
-                  this.log('ASSIST', `🏃 Savaşa yaklaşılıyor (${Math.round(distToFight)}m) -> [${assist.targetName || 'Mob'}]`, 'info');
+                  this.log('ASSIST', `🏃 Savaşa yaklaşılıyor (${Math.round(distToFight)}m -> ${desiredDist}m) -> [${assist.targetName || 'Mob'}]`, 'info');
                   const dx = p.x - fightX;
                   const dz = p.z - fightZ;
                   const angle = Math.atan2(dz, dx);
-                  const approachX = fightX + Math.cos(angle) * 7;
-                  const approachZ = fightZ + Math.sin(angle) * 7;
+                  const approachX = fightX + Math.cos(angle) * desiredDist;
+                  const approachZ = fightZ + Math.sin(angle) * desiredDist;
                   this.sendGamePacket({ t: 'move.click', d: { x: approachX, z: approachZ } });
 
                   const walkStart = Date.now();
                   while (this.running && !this.paused && (Date.now() - walkStart < 3500)) {
-                    await this.sleep(300);
+                    await this.sleep(250);
                     const curP = this.telemetry.player;
-                    if (curP.x != null && curP.z != null && Math.hypot(curP.x - fightX, curP.z - fightZ) <= 11) {
+                    if (curP.x != null && curP.z != null && Math.hypot(curP.x - fightX, curP.z - fightZ) <= (desiredDist + 2)) {
                       break;
                     }
                   }
                 }
               }
 
-              // 2. Lock on target: Send target dispatcher, combat.attack and Tab
+              // 2. Lock on target:
               this.telemetry.target.id = targetMobId;
               this.telemetry.target.hasTarget = true;
               this.telemetry.target.isDead = false;
               this.telemetry.target.name = assist.targetName || `[Assist] ${memberName}`;
-              this.telemetry.target.hpPercent = (assist.hpCurrent && assist.hpMax) ? Math.round((assist.hpCurrent / assist.hpMax) * 100) : 100;
+              this.telemetry.target.hpPercent = (assist.hpCurrent && assist.hpMax) ? Math.round((assist.hpCurrent / assist.hpMax) * 100) : (assist.hpPercent || 100);
               this.telemetry.target.hpMax = assist.hpMax || 0;
               this.telemetry.target.hpCurrent = assist.hpCurrent || 0;
+              this.targetLastSeenTime = Date.now();
 
-              this.targetDispatcher({ id: targetMobId });
+              // Send target dispatcher with name and hp
+              this.targetDispatcher({
+                id: targetMobId,
+                name: assist.targetName,
+                hpPercent: this.telemetry.target.hpPercent
+              });
+
+              // Send server combat.attack packet
               this.sendGamePacket({
                 t: 'combat.attack',
                 d: { id: targetMobId }
               });
+
+              // Tap Tab right in front of the mob to ensure client 3D engine selects it!
+              this.dispatchKey('Tab', 40);
 
               this.log('TARGET', `🎯 Parti Üyesi [${memberName}] hedefine kilitlenildi: [${this.telemetry.target.name}]`, 'success');
               await this.sleep(150);
