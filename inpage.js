@@ -761,12 +761,14 @@
         }
       }
 
-      // ONLY declare dead / lost if absent continuously for more than 4000ms!
+      // Target frame lost: clear target after 450ms of absence (~5 ticks)
       if (!foundTarget) {
-        if (gameState.target.hasTarget && (Date.now() - gameState.target.lastSeen > 4000)) {
+        if (gameState.target.hasTarget && (Date.now() - (gameState.target.lastSeen || 0) > 450)) {
           gameState.target.hasTarget = false;
           gameState.target.isDead = true;
           gameState.target.hpPercent = 0;
+          gameState.target.id = null;
+          gameState.target.name = '';
         }
       }
 

@@ -274,6 +274,37 @@ class SroBotEngine {
     );
   }
 
+  isAssistTargetMatched(telemetryTarget, assist) {
+    if (!telemetryTarget || !telemetryTarget.hasTarget || telemetryTarget.isDead) return false;
+    if (!assist) return false;
+
+    // Never match friendly party members or self
+    if (this.isFriendlyPartyMember(telemetryTarget.id, telemetryTarget.name) || telemetryTarget.id === this.telemetry.player?.id) {
+      return false;
+    }
+
+    // 1. Exact entity ID match if available
+    if (assist.targetId && telemetryTarget.id && Number(telemetryTarget.id) === Number(assist.targetId)) {
+      return true;
+    }
+
+    // 2. Name match (case-insensitive substring, e.g. "Niya Soldier")
+    const tName = (telemetryTarget.name || '').trim().toLowerCase();
+    const aName = (assist.targetName || '').trim().toLowerCase();
+    if (tName && aName && aName !== 'canavar' && aName !== 'mob') {
+      if (tName.includes(aName) || aName.includes(tName)) {
+        return true;
+      }
+    }
+
+    // 3. Fallback: If assist has generic name, but target is an enemy mob
+    if ((!aName || aName === 'canavar' || aName === 'mob') && tName && !tName.includes('player')) {
+      return true;
+    }
+
+    return false;
+  }
+
   abandonTarget(reason = "Takılma / Ulaşılamıyor") {
     const tid = this.telemetry.target.id;
     if (tid) {
@@ -713,12 +744,7 @@ class SroBotEngine {
         this.telemetry.target.name = '';
         this.clearTargetDispatcher();
       } else {
-        const isAssistActive = !!(this.config.party?.assistEnabled && this.config.party?.assistMemberName && this.telemetry.target.id && !this.telemetry.target.isDead && (Date.now() - (this.targetLastSeenTime || 0) < 5000));
-        if (isAssistActive && !data.target.hasTarget && data.target.isDead) {
-          // Protect assist target from being prematurely dropped by empty scrape
-        } else {
-          Object.assign(this.telemetry.target, data.target);
-        }
+        Object.assign(this.telemetry.target, data.target);
       }
     }
     if (data.lastItemReceivedTime) {
@@ -980,25 +1006,42 @@ class SroBotEngine {
                 }
               }
 
-              // 2. Lock on target (SINGLE clean target selection, NO conflicting Tab, NO conflicting auto-attack packet!):
-              this.telemetry.target.id = targetMobId;
-              this.telemetry.target.hasTarget = true;
-              this.telemetry.target.isDead = false;
-              this.telemetry.target.name = assist.targetName || `[Assist] ${memberName}`;
-              this.telemetry.target.hpPercent = (assist.hpCurrent && assist.hpMax) ? Math.round((assist.hpCurrent / assist.hpMax) * 100) : (assist.hpPercent || 100);
-              this.telemetry.target.hpMax = assist.hpMax || 0;
-              this.telemetry.target.hpCurrent = assist.hpCurrent || 0;
-              this.targetLastSeenTime = Date.now();
+              // 2. TAB-LOCK: Press Tab until the party member's target mob is selected natively in the game!
+              const targetKey = this.config.targeting.key || 'Tab';
+              let targetMatched = false;
+              const maxTabAttempts = 6;
 
-              // Notify inpage to set target in client engine native QQ store
-              this.targetDispatcher({
-                id: targetMobId,
-                name: assist.targetName,
-                hpPercent: this.telemetry.target.hpPercent
-              });
+              for (let attempt = 0; attempt < maxTabAttempts; attempt++) {
+                if (!this.running || this.paused) break;
 
-              this.log('TARGET', `🎯 Parti Üyesi [${memberName}] hedefine kilitlenildi: [${this.telemetry.target.name}]`, 'success');
-              await this.sleep(120);
+                // Check if current native target matches
+                if (this.isAssistTargetMatched(this.telemetry.target, assist)) {
+                  targetMatched = true;
+                  break;
+                }
+
+                this.log('ASSIST', `🎯 [${memberName}] hedefi aranıyor [${targetKey}] (${attempt + 1}/${maxTabAttempts}) -> [${assist.targetName || 'Mob'}]`, 'info');
+                this.dispatchKey(targetKey, 50);
+                await this.sleep(160);
+
+                if (this.isAssistTargetMatched(this.telemetry.target, assist)) {
+                  targetMatched = true;
+                  break;
+                }
+              }
+
+              if (targetMatched) {
+                this.targetLastSeenTime = Date.now();
+                this.log('TARGET', `🎯 Parti hedefi Tab ile kilitlendi: [${this.telemetry.target.name}] (Can: %${this.telemetry.target.hpPercent})`, 'success');
+              } else {
+                // Tab did not find the mob yet (maybe out of Tab cone or behind obstacle)
+                // Step closer to fight coordinates and retry
+                if (fightX != null && fightZ != null) {
+                  this.sendGamePacket({ t: 'move.click', d: { x: fightX, z: fightZ } });
+                }
+                await this.sleep(250);
+                continue;
+              }
             } else {
               // No mob to attack right now: Follow the designated party member!
               this.traceSpecificMember(memberName);
@@ -1112,13 +1155,15 @@ class SroBotEngine {
         }
       } else {
         if (!targetAbsentStartTime) targetAbsentStartTime = now;
-        if (now - targetAbsentStartTime > 4000 && now - lastDamageDealtTime > 4000) {
-          this.log('COMBAT', `💀 [${mobName}] kayboldu / öldü (4sn sessizlik).`, 'success');
+        if (now - targetAbsentStartTime > 800) {
+          this.log('COMBAT', `💀 [${mobName}] kayboldu / öldü.`, 'success');
           mobDiedSuccessfully = true;
           this.telemetry.target.isDead = true;
           this.telemetry.target.hasTarget = false;
           break;
         }
+        await this.sleep(100);
+        continue;
       }
 
       // If player is running to target or casting buffs, reset engagementStart so running across map doesn't trigger stuck!
@@ -1148,6 +1193,9 @@ class SroBotEngine {
       this.checkAndExecuteAutoRes();
 
       // 6. Dispatch skill key
+      if (!this.telemetry.target.hasTarget || this.telemetry.target.isDead) {
+        break;
+      }
       const keyToPress = keys[keyIdx % keys.length];
       keyIdx++;
 
