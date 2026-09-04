@@ -408,7 +408,7 @@ class SroBotEngine {
         const member = members.find(m => m.name && m.name.toLowerCase() === buff.partyMemberName.toLowerCase());
         if (member && member.entityId) {
           this.log('BUFF', `🎯 Parti Üyesi [${member.name}] hedefleniyor...`, 'info');
-          this.targetDispatcher({ id: member.entityId });
+          this.targetDispatcher({ id: member.entityId, name: member.name, isPartyMember: true });
           await this.sleep(250);
         }
       }
@@ -532,13 +532,9 @@ class SroBotEngine {
 
           if (!this.running || this.paused) return;
 
-          // 3. Target the dead party member (Zustand store + DOM click + packet)
+          // 3. Target the dead party member (Zustand store + DOM click)
           if (deadMember.entityId) {
-            this.targetDispatcher({ id: deadMember.entityId, name: deadMember.name });
-            this.sendGamePacket({
-              t: 'target.set',
-              d: { id: deadMember.entityId }
-            });
+            this.targetDispatcher({ id: deadMember.entityId, name: deadMember.name, isPartyMember: true });
             await this.sleep(350);
           }
 
@@ -979,7 +975,7 @@ class SroBotEngine {
               this.telemetry.target.hpCurrent = assist.hpCurrent || 0;
               this.targetLastSeenTime = Date.now();
 
-              // Notify inpage to set target in client engine & send target.set
+              // Notify inpage to set target in client engine native QQ store
               this.targetDispatcher({
                 id: targetMobId,
                 name: assist.targetName,

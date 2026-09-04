@@ -382,15 +382,15 @@
           const isPartyMember = gameState.party.members.some(m => m.entityId === data.dst);
           if (data.dst && data.dst !== localPlayerId && !isPartyMember) {
             gameState.assistTargetId = data.dst;
-            const mInfo = gameState.monsters?.get(data.dst);
+            const entInfo = getEntityCoords(data.dst);
             notifyContentScript('PARTY_ASSIST_TARGET', {
               targetId: data.dst,
               memberName: assistMember.name,
-              targetName: mInfo?.name || 'Canavar',
-              targetX: mInfo?.x,
-              targetZ: mInfo?.z,
-              hpCurrent: data.dstHp ?? mInfo?.hp,
-              hpMax: mInfo?.maxHp
+              targetName: entInfo?.name || 'Canavar',
+              targetX: entInfo?.x,
+              targetZ: entInfo?.z,
+              hpCurrent: data.dstHp ?? entInfo?.hp,
+              hpMax: entInfo?.maxHp
             });
           }
         }
@@ -413,15 +413,15 @@
           const isPartyMember = gameState.party.members.some(m => m.entityId === data.targetId);
           if (data.targetId && data.targetId !== localPlayerId && !isPartyMember) {
             gameState.assistTargetId = data.targetId;
-            const mInfo = gameState.monsters?.get(data.targetId);
+            const entInfo = getEntityCoords(data.targetId);
             notifyContentScript('PARTY_ASSIST_TARGET', {
               targetId: data.targetId,
               memberName: assistMember.name,
-              targetName: mInfo?.name || 'Canavar',
-              targetX: mInfo?.x,
-              targetZ: mInfo?.z,
-              hpCurrent: mInfo?.hp,
-              hpMax: mInfo?.maxHp
+              targetName: entInfo?.name || 'Canavar',
+              targetX: entInfo?.x,
+              targetZ: entInfo?.z,
+              hpCurrent: entInfo?.hp,
+              hpMax: entInfo?.maxHp
             });
           }
         }
@@ -447,15 +447,15 @@
           const isPartyMember = gameState.party.members.some(m => m.entityId === data.targetId);
           if (data.targetId && data.targetId !== localPlayerId && !isPartyMember) {
             gameState.assistTargetId = data.targetId;
-            const mInfo = gameState.monsters?.get(data.targetId);
+            const entInfo = getEntityCoords(data.targetId);
             notifyContentScript('PARTY_ASSIST_TARGET', {
               targetId: data.targetId,
               memberName: assistMember.name,
-              targetName: mInfo?.name || 'Canavar',
-              targetX: mInfo?.x,
-              targetZ: mInfo?.z,
-              hpCurrent: mInfo?.hp,
-              hpMax: mInfo?.maxHp
+              targetName: entInfo?.name || 'Canavar',
+              targetX: entInfo?.x,
+              targetZ: entInfo?.z,
+              hpCurrent: entInfo?.hp,
+              hpMax: entInfo?.maxHp
             });
           }
         }
@@ -470,18 +470,31 @@
           const isPartyMember = gameState.party.members.some(m => m.entityId === data.targetId);
           if (data.targetId && data.targetId !== localPlayerId && !isPartyMember) {
             gameState.assistTargetId = data.targetId;
-            const mInfo = gameState.monsters?.get(data.targetId);
+            const entInfo = getEntityCoords(data.targetId);
             notifyContentScript('PARTY_ASSIST_TARGET', {
               targetId: data.targetId,
               memberName: assistMember.name,
-              targetName: mInfo?.name || 'Canavar',
-              targetX: mInfo?.x,
-              targetZ: mInfo?.z,
-              hpCurrent: mInfo?.hp,
-              hpMax: mInfo?.maxHp
+              targetName: entInfo?.name || 'Canavar',
+              targetX: entInfo?.x,
+              targetZ: entInfo?.z,
+              hpCurrent: entInfo?.hp,
+              hpMax: entInfo?.maxHp
             });
           }
         }
+      }
+    }
+
+    // Server Error Packet (e.g. ERR_NOT_FOUND)
+    if (type === 'err' && data) {
+      console.warn(`%c[Silkroad Bot Pro] ⚠️ Sunucu Hata Paketi (err): [${data.code || 'UNKNOWN'}]`, "color:#ef4444;font-weight:bold;", data);
+      if (data.code === 'ERR_NOT_FOUND') {
+        gameState.target.hasTarget = false;
+        gameState.target.isDead = true;
+        if (gameState.assistTargetId === gameState.target.id) {
+          gameState.assistTargetId = null;
+        }
+        notifyContentScript('TARGET_LOST', { reason: 'ERR_NOT_FOUND' });
       }
     }
 
@@ -1170,18 +1183,14 @@
     return null;
   }
 
-    function selectPartyMemberDom(entityId, name) {
+  function selectPartyMemberDom(entityId, name) {
     try {
       const cards = document.querySelectorAll('button.party-card, [class*="party-card"], button[class*="party"]');
       for (const card of cards) {
         if (card.closest('#sro-bot-host')) continue;
         let matched = false;
 
-        if (name && card.innerText && card.innerText.toLowerCase().includes(name.toLowerCase())) {
-          matched = true;
-        }
-
-        const fiberKey = Object.keys(card).find(k => k.startsWith('__reactFiber$') || k.startsWith('__reactInternalInstance$'));
+        const fiberKey = Object.keys(card).find(k => k.startsWith('__reactFiber') || k.startsWith('__reactInternalInstance'));
         if (fiberKey && card[fiberKey]) {
           const fiber = card[fiberKey];
           const m = fiber.memoizedProps?.m;
@@ -1190,14 +1199,15 @@
           }
 
           if (matched) {
-            // Extract & cache QQ UI store if available!
+            // Extract & cache QQ store if available in fiber ancestry
             let cur = fiber;
             while (cur && !window.__SRO_TARGET_STORE__) {
               if (cur.memoizedState) {
                 let h = cur.memoizedState;
                 while (h) {
-                  if (h.memoizedState && typeof h.memoizedState.setTarget === 'function') {
+                  if (isTargetStore(h.memoizedState)) {
                     window.__SRO_TARGET_STORE__ = h.memoizedState;
+                    window.QQ = h.memoizedState;
                     break;
                   }
                   h = h.next;
@@ -1206,12 +1216,18 @@
               cur = cur.return;
             }
 
-            // Direct call to React button onClick prop (which calls: l && (V$(), QQ.getState().setTarget(e.entityId)))
             if (typeof fiber.memoizedProps?.onClick === 'function') {
               try {
                 fiber.memoizedProps.onClick({ preventDefault: () => {}, stopPropagation: () => {} });
               } catch (err) {}
             }
+          }
+        }
+
+        if (!matched && name && card.innerText) {
+          const lines = card.innerText.split('\n').map(s => s.trim().toLowerCase());
+          if (lines.includes(name.toLowerCase()) || lines.some(l => l.startsWith(name.toLowerCase()))) {
+            matched = true;
           }
         }
 
@@ -1221,7 +1237,7 @@
           card.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, view: window }));
           card.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
           card.click();
-          console.log(`%c[Silkroad Bot Pro] 🎯 Parti Üyesi Tıklandı: [${name || entityId}]`, "color:#10b981;font-weight:bold;");
+          console.log(`%c[Silkroad Bot Pro] 🎯 Parti Üyesi Seçildi: [${name || entityId}]`, "color:#10b981;font-weight:bold;");
           return true;
         }
       }
@@ -1231,50 +1247,340 @@
     return false;
   }
 
-  function findZustandTargetStore() {
-    if (window.__SRO_TARGET_STORE__) return window.__SRO_TARGET_STORE__;
+  function getWebpackRequire() {
+    if (window.__SRO_WEBPACK_REQ__) return window.__SRO_WEBPACK_REQ__;
     try {
-      const root = document.querySelector('#root') || document.body;
-      if (!root) return null;
-      const fiberKey = Object.keys(root).find(k => k.startsWith('__reactFiber') || k.startsWith('__reactContainer'));
-      if (!fiberKey) return null;
-
-      const stack = [root[fiberKey]];
-      const visited = new Set();
-      let iterations = 0;
-
-      while (stack.length > 0 && iterations < 2500) {
-        iterations++;
-        const fiber = stack.pop();
-        if (!fiber || visited.has(fiber)) continue;
-        visited.add(fiber);
-
-        let hook = fiber.memoizedState;
-        while (hook) {
-          if (hook.memoizedState && typeof hook.memoizedState === 'object') {
-            if (typeof hook.memoizedState.setTarget === 'function') {
-              window.__SRO_TARGET_STORE__ = hook.memoizedState;
-              return window.__SRO_TARGET_STORE__;
-            }
-          }
-          hook = hook.next;
-        }
-
-        if (fiber.memoizedProps) {
-          for (const key of Object.keys(fiber.memoizedProps)) {
-            const val = fiber.memoizedProps[key];
-            if (val && typeof val.setTarget === 'function') {
-              window.__SRO_TARGET_STORE__ = val;
-              return window.__SRO_TARGET_STORE__;
-            }
+      for (const k of Object.keys(window)) {
+        if (k.startsWith('webpackChunk')) {
+          const chunk = window[k];
+          if (Array.isArray(chunk) && typeof chunk.push === 'function') {
+            chunk.push([
+              [Symbol('sro_probe_' + Math.random())],
+              {},
+              (req) => { window.__SRO_WEBPACK_REQ__ = req; }
+            ]);
+            if (window.__SRO_WEBPACK_REQ__) return window.__SRO_WEBPACK_REQ__;
           }
         }
-
-        if (fiber.child) stack.push(fiber.child);
-        if (fiber.sibling) stack.push(fiber.sibling);
       }
     } catch (e) {}
     return null;
+  }
+
+  function findGameEntities() {
+    if (window.__SRO_GAME_ENTITIES__) return window.__SRO_GAME_ENTITIES__;
+    if (window.Q?.entities) {
+      window.__SRO_GAME_ENTITIES__ = window.Q.entities;
+      return window.__SRO_GAME_ENTITIES__;
+    }
+
+    const globals = [window.Q, window.game, window.app, window.Client, window.world, window.engine];
+    for (const g of globals) {
+      if (g && g.entities && (g.entities instanceof Map || typeof g.entities === 'object')) {
+        window.__SRO_GAME_ENTITIES__ = g.entities;
+        return g.entities;
+      }
+    }
+
+    try {
+      const req = getWebpackRequire();
+      if (req?.c) {
+        for (const mId in req.c) {
+          const exp = req.c[mId]?.exports;
+          if (!exp) continue;
+          if (exp.entities && (exp.entities instanceof Map || typeof exp.entities === 'object')) {
+            window.__SRO_GAME_ENTITIES__ = exp.entities;
+            return exp.entities;
+          }
+          if (exp.Q?.entities) {
+            window.__SRO_GAME_ENTITIES__ = exp.Q.entities;
+            return exp.Q.entities;
+          }
+        }
+      }
+    } catch (e) {}
+
+    return null;
+  }
+
+  function getEntityCoords(id) {
+    if (!id) return null;
+
+    // 1. Try Q.entities or cached game entities
+    try {
+      const entities = findGameEntities();
+      if (entities) {
+        let ent = null;
+        if (typeof entities.get === 'function') {
+          ent = entities.get(id);
+        } else if (entities[id]) {
+          ent = entities[id];
+        }
+        if (ent) {
+          const x = ent.x ?? ent.position?.x ?? ent.pos?.x ?? ent.transform?.position?.x;
+          const z = ent.z ?? ent.position?.z ?? ent.pos?.z ?? ent.transform?.position?.z;
+          const y = ent.y ?? ent.position?.y ?? ent.pos?.y;
+          if (x != null && z != null) {
+            return {
+              x: Math.round(x),
+              z: Math.round(z),
+              y: y != null ? Math.round(y) : null,
+              name: ent.name || ent.model?.name,
+              hp: ent.hp ?? ent.vitals?.hp,
+              maxHp: ent.maxHp ?? ent.vitals?.maxHp
+            };
+          }
+        }
+      }
+    } catch (e) {}
+
+    // 2. Fallback to gameState.monsters (live network packet tracking)
+    if (gameState.monsters?.has(id)) {
+      const m = gameState.monsters.get(id);
+      return {
+        x: Math.round(m.x),
+        z: Math.round(m.z),
+        y: m.y != null ? Math.round(m.y) : null,
+        name: m.name,
+        hp: m.hp,
+        maxHp: m.maxHp
+      };
+    }
+
+    // 3. Fallback to party members
+    if (gameState.party?.members) {
+      const mem = gameState.party.members.find(m => m.entityId === id);
+      if (mem && mem.x != null && mem.z != null) {
+        return {
+          x: Math.round(mem.x),
+          z: Math.round(mem.z),
+          name: mem.name,
+          hp: mem.hp,
+          maxHp: mem.maxHp
+        };
+      }
+    }
+
+    return null;
+  }
+
+  function isTargetStore(obj) {
+    if (!obj || (typeof obj !== 'object' && typeof obj !== 'function')) return false;
+
+    // 1. Standard Zustand store hook (useStore with getState)
+    if (typeof obj.getState === 'function') {
+      try {
+        const state = obj.getState();
+        if (state && (typeof state.setTarget === 'function' || 'targetId' in state)) {
+          return true;
+        }
+      } catch (e) {}
+    }
+
+    // 2. Direct state object / store with setTarget and targetId
+    if (typeof obj.setTarget === 'function' && 'targetId' in obj) {
+      return true;
+    }
+
+    return false;
+  }
+
+  function findZustandTargetStore() {
+    if (window.__SRO_TARGET_STORE__) return window.__SRO_TARGET_STORE__;
+
+    // 1. Check window.QQ and candidate globals
+    if (isTargetStore(window.QQ)) {
+      window.__SRO_TARGET_STORE__ = window.QQ;
+      return window.QQ;
+    }
+
+    const candGlobals = [window.targetStore, window.useTargetStore, window.store, window.__STORE__, window.game, window.app, window.Client, window.core];
+    for (const g of candGlobals) {
+      if (isTargetStore(g)) {
+        window.__SRO_TARGET_STORE__ = g;
+        window.QQ = g;
+        return g;
+      }
+    }
+
+    // 2. Search Webpack 5 initialized modules
+    try {
+      const req = getWebpackRequire();
+      if (req?.c) {
+        for (const mId in req.c) {
+          const exp = req.c[mId]?.exports;
+          if (!exp) continue;
+          if (isTargetStore(exp)) {
+            window.__SRO_TARGET_STORE__ = exp;
+            window.QQ = exp;
+            return exp;
+          }
+          if (typeof exp === 'object' || typeof exp === 'function') {
+            for (const key of Object.keys(exp)) {
+              try {
+                const val = exp[key];
+                if (isTargetStore(val)) {
+                  window.__SRO_TARGET_STORE__ = val;
+                  window.QQ = val;
+                  return val;
+                }
+              } catch (e) {}
+            }
+          }
+        }
+      }
+    } catch (e) {}
+
+    // 3. Search via party card / target frame React Fibers (fastest, most reliable)
+    try {
+      const domTargets = document.querySelectorAll(
+        'button.party-card, [class*="party-card"], button[class*="party"], [class*="target-frame"], [class*="unit-frame"], [class*="action-bar"], #root'
+      );
+      for (const el of domTargets) {
+        const fiberKey = Object.keys(el).find(k => k.startsWith('__reactFiber') || k.startsWith('__reactInternalInstance'));
+        if (!fiberKey || !el[fiberKey]) continue;
+
+        let cur = el[fiberKey];
+        let depth = 0;
+        while (cur && depth < 30) {
+          depth++;
+          // Check memoizedState hooks
+          let hook = cur.memoizedState;
+          while (hook) {
+            if (isTargetStore(hook.memoizedState)) {
+              window.__SRO_TARGET_STORE__ = hook.memoizedState;
+              window.QQ = hook.memoizedState;
+              return hook.memoizedState;
+            }
+            if (isTargetStore(hook.queue)) {
+              window.__SRO_TARGET_STORE__ = hook.queue;
+              window.QQ = hook.queue;
+              return hook.queue;
+            }
+            hook = hook.next;
+          }
+
+          // Check memoizedProps
+          if (cur.memoizedProps) {
+            for (const key of Object.keys(cur.memoizedProps)) {
+              const val = cur.memoizedProps[key];
+              if (isTargetStore(val)) {
+                window.__SRO_TARGET_STORE__ = val;
+                window.QQ = val;
+                return val;
+              }
+            }
+          }
+
+          cur = cur.return;
+        }
+      }
+    } catch (e) {}
+
+    // 4. Breadth-First Fiber search from #root
+    try {
+      const root = document.querySelector('#root') || document.querySelector('#app') || document.body;
+      if (root) {
+        const fiberKey = Object.keys(root).find(k => k.startsWith('__reactFiber') || k.startsWith('__reactContainer'));
+        if (fiberKey && root[fiberKey]) {
+          const stack = [root[fiberKey]];
+          const visited = new Set();
+          let iterations = 0;
+
+          while (stack.length > 0 && iterations < 2500) {
+            iterations++;
+            const fiber = stack.pop();
+            if (!fiber || visited.has(fiber)) continue;
+            visited.add(fiber);
+
+            let hook = fiber.memoizedState;
+            while (hook) {
+              if (isTargetStore(hook.memoizedState)) {
+                window.__SRO_TARGET_STORE__ = hook.memoizedState;
+                window.QQ = hook.memoizedState;
+                return hook.memoizedState;
+              }
+              if (isTargetStore(hook.queue)) {
+                window.__SRO_TARGET_STORE__ = hook.queue;
+                window.QQ = hook.queue;
+                return hook.queue;
+              }
+              hook = hook.next;
+            }
+
+            if (fiber.memoizedProps) {
+              for (const key of Object.keys(fiber.memoizedProps)) {
+                const val = fiber.memoizedProps[key];
+                if (isTargetStore(val)) {
+                  window.__SRO_TARGET_STORE__ = val;
+                  window.QQ = val;
+                  return val;
+                }
+              }
+            }
+
+            if (fiber.child) stack.push(fiber.child);
+            if (fiber.sibling) stack.push(fiber.sibling);
+          }
+        }
+      }
+    } catch (e) {}
+
+    return null;
+  }
+
+  function setClientTarget(targetId) {
+    if (targetId == null) return false;
+    const store = findZustandTargetStore();
+    if (!store) {
+      console.warn(`[Silkroad Bot Pro] ⚠️ Target store henüz bulunamadı, id: ${targetId}`);
+      return false;
+    }
+
+    try {
+      if (typeof store.setTarget === 'function') {
+        store.setTarget(targetId);
+        console.log(`%c[Silkroad Bot Pro] 🎯 Hedef Zustand Store'a aktarıldı: [${targetId}] (setTarget)`, "color:#10b981;font-weight:bold;");
+        return true;
+      }
+      if (typeof store.getState === 'function') {
+        const state = store.getState();
+        if (typeof state?.setTarget === 'function') {
+          state.setTarget(targetId);
+          console.log(`%c[Silkroad Bot Pro] 🎯 Hedef Zustand Store'a aktarıldı: [${targetId}] (getState().setTarget)`, "color:#10b981;font-weight:bold;");
+          return true;
+        }
+        if (typeof store.setState === 'function') {
+          store.setState({ targetId: targetId });
+          console.log(`%c[Silkroad Bot Pro] 🎯 Hedef Zustand Store'a aktarıldı: [${targetId}] (store.setState)`, "color:#10b981;font-weight:bold;");
+          return true;
+        }
+      }
+      if (typeof store.setState === 'function') {
+        store.setState({ targetId: targetId });
+        console.log(`%c[Silkroad Bot Pro] 🎯 Hedef Zustand Store'a aktarıldı: [${targetId}] (setState)`, "color:#10b981;font-weight:bold;");
+        return true;
+      }
+    } catch (err) {
+      console.warn('[Silkroad Bot Pro] setClientTarget error:', err);
+    }
+    return false;
+  }
+
+  function clearClientTarget() {
+    const store = findZustandTargetStore();
+    if (!store) return;
+    try {
+      if (typeof store.setTarget === 'function') {
+        store.setTarget(null);
+      } else if (typeof store.getState === 'function') {
+        const state = store.getState();
+        if (typeof state?.setTarget === 'function') state.setTarget(null);
+        else if (typeof store.setState === 'function') store.setState({ targetId: null });
+      } else if (typeof store.setState === 'function') {
+        store.setState({ targetId: null });
+      }
+    } catch (e) {}
   }
 
   function notifyContentScript(type, payload) {
@@ -1314,6 +1620,13 @@
       }
     } else if (type === 'SET_TARGET_ENTITY') {
       if (payload?.id) {
+        // DEFENSE: Never target party members or friendly players during assist/mob combat!
+        const isParty = !payload.isPartyMember && gameState.party?.members?.some(m => m.entityId === payload.id);
+        if (isParty) {
+          console.warn(`[Silkroad Bot Pro] ⚠️ Dost parti üyesi hedef seçilmek istendi, engellendi! Entity ID: ${payload.id}`);
+          return;
+        }
+
         gameState.target.id = payload.id;
         gameState.target.hasTarget = true;
         gameState.target.isDead = false;
@@ -1321,29 +1634,21 @@
         if (payload.hpPercent != null) gameState.target.hpPercent = payload.hpPercent;
         if (payload.name) gameState.target.name = payload.name;
 
-        // 1. Send dedicated server target.set packet (Opcode 18)
-        sendPacket({
-          t: 'target.set',
-          d: { id: payload.id }
-        });
+        // 1. Set target in client native Zustand store (QQ)
+        setClientTarget(payload.id);
 
-        // 2. Zustand store target set
-        try {
-          const store = findZustandTargetStore();
-          if (store?.setTarget) {
-            store.setTarget(payload.id);
-          }
-        } catch (e) {}
+        // 2. Only if explicitly targeting a friendly party member (for resurrection or party buffs), click their DOM card
+        if (payload.isPartyMember) {
+          selectPartyMemberDom(payload.id, payload.name);
+        }
 
-        // 3. Click the party member frame in DOM / invoke React onClick handler
-        selectPartyMemberDom(payload.id, payload.name);
+        // NO opcode 18 (target.set)! The official client NEVER sends target.set!
+        // When hotbar skill keys (1, 2, 3...) are pressed, the client's t1() function
+        // automatically reads QQ.getState().targetId and sends skill.cast / combat.attack!
       }
     } else if (type === 'CLEAR_TARGET') {
       sendPacket({ t: 'combat.stop', d: {} });
-      try {
-        const store = findZustandTargetStore();
-        if (store?.setTarget) store.setTarget(null);
-      } catch (e) {}
+      clearClientTarget();
       simulateKeyPress('Escape', 50);
     }
   });

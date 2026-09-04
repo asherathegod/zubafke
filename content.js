@@ -177,6 +177,8 @@
         }
       } else if (type === 'TARGET_DIED') {
         engine.handleTargetDied(payload?.id);
+      } else if (type === 'TARGET_LOST') {
+        engine.handleTargetDied(payload?.id);
       } else if (type === 'ITEM_DROPPED') {
         if (payload?.item) engine.handleDrop(payload.item);
       } else if (type === 'TOGGLE_HOTKEY') {
