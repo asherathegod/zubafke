@@ -459,6 +459,8 @@ class SroBotEngine {
   async checkAndExecuteDynamicBuffs() {
     if (!this.running || this.paused) return;
     if (this.buffExecutionInProgress) return;
+    // Never interrupt active combat with buff executions or weapon swaps!
+    if (this.state === 'ATTACKING' && this.telemetry.target.hasTarget && !this.telemetry.target.isDead) return;
     const now = Date.now();
     const list = this.getBuffList();
 
@@ -633,9 +635,8 @@ class SroBotEngine {
   checkAndExecuteAutoTrace() {
     if (!this.running || this.paused) return;
     if (!this.config.party?.autoTraceEnabled) return;
-    // PAUSE movement only during ACTIVE valid mob combat!
-    const isAttackingValidMob = (this.state === 'ATTACKING' && this.telemetry.target.hasTarget && !this.telemetry.target.isDead && !this.isFriendlyPartyMember(this.telemetry.target.id, this.telemetry.target.name));
-    if (isAttackingValidMob) {
+    // NEVER move during active combat! Movement instantly cancels active skill animations!
+    if (this.state === 'ATTACKING') {
       return;
     }
     const targetName = (this.config.party.traceTargetName || "").trim().toLowerCase();
@@ -734,6 +735,16 @@ class SroBotEngine {
 
   handlePartyUpdate(partyData) {
     if (!partyData) return;
+    if (this.telemetry.party?.members && Array.isArray(partyData.members)) {
+      const oldMap = new Map(this.telemetry.party.members.map(m => [m.entityId, m]));
+      partyData.members.forEach(newM => {
+        const oldM = oldMap.get(newM.entityId);
+        if (oldM) {
+          if (newM.x == null && oldM.x != null) newM.x = oldM.x;
+          if (newM.z == null && oldM.z != null) newM.z = oldM.z;
+        }
+      });
+    }
     this.telemetry.party = partyData;
     if (this.running && !this.paused) {
       this.checkAndExecuteAutoTrace();
@@ -745,11 +756,15 @@ class SroBotEngine {
   }
 
   handleTargetDied(id) {
-    if (this.telemetry.target.id === id || !this.telemetry.target.id) {
+    if (!id || this.telemetry.target.id === id || !this.telemetry.target.id) {
       this.telemetry.target.isDead = true;
       this.telemetry.target.hpPercent = 0;
       this.telemetry.target.hpCurrent = 0;
       this.telemetry.target.hasTarget = false;
+      this.telemetry.target.id = null;
+    }
+    if (this.telemetry.assistTarget && (!id || this.telemetry.assistTarget.targetId === id)) {
+      this.telemetry.assistTarget = null;
     }
   }
 
@@ -1054,7 +1069,7 @@ class SroBotEngine {
     const keys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
     if (keys.length === 0) keys.push("1");
 
-    const keyDelay = Math.max(180, (this.config.combat.keyDelayMs || 280) + (this.throttlePenaltyMs || 0));
+    const keyDelay = Math.max(300, (this.config.combat.keyDelayMs || 400) + (this.throttlePenaltyMs || 0));
     let keyIdx = 0;
     let targetAbsentStartTime = 0;
     let mobDiedSuccessfully = false;
@@ -1141,11 +1156,15 @@ class SroBotEngine {
       const castWaitStart = Date.now();
       while (this.running && !this.paused && this.playerCastingUntil && this.playerCastingUntil > Date.now()) {
         const remaining = Math.min(2500, this.playerCastingUntil - Date.now());
-        await this.sleep(Math.max(80, remaining));
+        await this.sleep(Math.max(60, remaining));
         if (Date.now() - castWaitStart > 3500) break; // Timeout safety
       }
 
       this.stats.skillsCast++;
+      // Set expected cast window (at least 1000ms) so rapid loop doesn't immediately send next key
+      if (!this.playerCastingUntil || this.playerCastingUntil < Date.now()) {
+        this.playerCastingUntil = Date.now() + 1100;
+      }
       this.dispatchKey(keyToPress, 55);
 
       const currentHp = this.telemetry.target.hpPercent !== undefined ? `%${this.telemetry.target.hpPercent}` : '?';
@@ -1153,6 +1172,12 @@ class SroBotEngine {
 
       // Wait keyDelay plus allow server cast.start to register
       await this.sleep(this.applyJitter(keyDelay));
+
+      // Wait for skill animation/cast to fully complete before attempting next key!
+      while (this.running && !this.paused && this.playerCastingUntil && this.playerCastingUntil > Date.now()) {
+        const remaining = Math.min(2500, this.playerCastingUntil - Date.now());
+        await this.sleep(Math.max(60, remaining));
+      }
     }
 
     return mobDiedSuccessfully;

@@ -323,6 +323,18 @@
 
     // Party Update directly from server
     if (type === 'party.update' && data) {
+      if (gameState.party?.members && Array.isArray(data.members)) {
+        const oldMap = new Map(gameState.party.members.map(m => [m.entityId, m]));
+        data.members.forEach(newM => {
+          const oldM = oldMap.get(newM.entityId);
+          if (oldM) {
+            if (newM.x == null && oldM.x != null) newM.x = oldM.x;
+            if (newM.z == null && oldM.z != null) newM.z = oldM.z;
+            if (newM.targetX == null && oldM.targetX != null) newM.targetX = oldM.targetX;
+            if (newM.targetZ == null && oldM.targetZ != null) newM.targetZ = oldM.targetZ;
+          }
+        });
+      }
       gameState.party = data;
       notifyContentScript('PARTY_UPDATED', { party: data });
     }
@@ -406,6 +418,8 @@
           gameState.target.isDead = false;
           gameState.target.lastSeen = Date.now();
         }
+        const windupMs = data.durationMs || data.windupMs || 1000;
+        notifyContentScript('PLAYER_CAST_START', { castMs: windupMs, groupId: data.groupId });
       }
       if (gameState.settings?.assistMemberName && gameState.party?.members) {
         const assistMember = gameState.party.members.find(m => m.name && m.name.toLowerCase() === gameState.settings.assistMemberName.toLowerCase());
@@ -489,12 +503,15 @@
     if (type === 'err' && data) {
       console.warn(`%c[Silkroad Bot Pro] ⚠️ Sunucu Hata Paketi (err): [${data.code || 'UNKNOWN'}]`, "color:#ef4444;font-weight:bold;", data);
       if (data.code === 'ERR_NOT_FOUND') {
+        const deadId = gameState.target.id;
         gameState.target.hasTarget = false;
         gameState.target.isDead = true;
-        if (gameState.assistTargetId === gameState.target.id) {
+        gameState.target.id = null;
+        if (gameState.assistTargetId === deadId) {
           gameState.assistTargetId = null;
         }
-        notifyContentScript('TARGET_LOST', { reason: 'ERR_NOT_FOUND' });
+        clearClientTarget();
+        notifyContentScript('TARGET_LOST', { id: deadId, reason: 'ERR_NOT_FOUND' });
       }
     }
 
@@ -1249,13 +1266,18 @@
 
   function getWebpackRequire() {
     if (window.__SRO_WEBPACK_REQ__) return window.__SRO_WEBPACK_REQ__;
+    if (typeof window.__webpack_require__ === 'function') {
+      window.__SRO_WEBPACK_REQ__ = window.__webpack_require__;
+      return window.__SRO_WEBPACK_REQ__;
+    }
     try {
       for (const k of Object.keys(window)) {
-        if (k.startsWith('webpackChunk')) {
+        if (k.startsWith('webpackChunk') || k.startsWith('webpackJsonp')) {
           const chunk = window[k];
           if (Array.isArray(chunk) && typeof chunk.push === 'function') {
+            const probeId = 'sro_probe_' + Math.floor(Math.random() * 1000000);
             chunk.push([
-              [Symbol('sro_probe_' + Math.random())],
+              [probeId],
               {},
               (req) => { window.__SRO_WEBPACK_REQ__ = req; }
             ]);
@@ -1276,7 +1298,7 @@
 
     const globals = [window.Q, window.game, window.app, window.Client, window.world, window.engine];
     for (const g of globals) {
-      if (g && g.entities && (g.entities instanceof Map || typeof g.entities === 'object')) {
+      if (g && g.entities && (g.entities instanceof Map || Array.isArray(g.entities) || typeof g.entities === 'object')) {
         window.__SRO_GAME_ENTITIES__ = g.entities;
         return g.entities;
       }
@@ -1288,7 +1310,7 @@
         for (const mId in req.c) {
           const exp = req.c[mId]?.exports;
           if (!exp) continue;
-          if (exp.entities && (exp.entities instanceof Map || typeof exp.entities === 'object')) {
+          if (exp.entities && (exp.entities instanceof Map || Array.isArray(exp.entities) || typeof exp.entities === 'object')) {
             window.__SRO_GAME_ENTITIES__ = exp.entities;
             return exp.entities;
           }
@@ -1305,6 +1327,8 @@
 
   function getEntityCoords(id) {
     if (!id) return null;
+    const numId = typeof id === 'string' && /^\d+$/.test(id) ? parseInt(id, 10) : id;
+    const strId = String(id);
 
     // 1. Try Q.entities or cached game entities
     try {
@@ -1312,9 +1336,11 @@
       if (entities) {
         let ent = null;
         if (typeof entities.get === 'function') {
-          ent = entities.get(id);
-        } else if (entities[id]) {
-          ent = entities[id];
+          ent = entities.get(numId) || entities.get(strId) || entities.get(id);
+        } else if (Array.isArray(entities)) {
+          ent = entities.find(e => e && (e.id === numId || e.id === strId || e.id === id));
+        } else if (typeof entities === 'object') {
+          ent = entities[numId] || entities[strId] || entities[id];
         }
         if (ent) {
           const x = ent.x ?? ent.position?.x ?? ent.pos?.x ?? ent.transform?.position?.x;
@@ -1335,21 +1361,23 @@
     } catch (e) {}
 
     // 2. Fallback to gameState.monsters (live network packet tracking)
-    if (gameState.monsters?.has(id)) {
-      const m = gameState.monsters.get(id);
-      return {
-        x: Math.round(m.x),
-        z: Math.round(m.z),
-        y: m.y != null ? Math.round(m.y) : null,
-        name: m.name,
-        hp: m.hp,
-        maxHp: m.maxHp
-      };
+    if (gameState.monsters) {
+      const m = gameState.monsters.get(numId) || gameState.monsters.get(strId) || gameState.monsters.get(id);
+      if (m && m.x != null && m.z != null) {
+        return {
+          x: Math.round(m.x),
+          z: Math.round(m.z),
+          y: m.y != null ? Math.round(m.y) : null,
+          name: m.name,
+          hp: m.hp,
+          maxHp: m.maxHp
+        };
+      }
     }
 
     // 3. Fallback to party members
     if (gameState.party?.members) {
-      const mem = gameState.party.members.find(m => m.entityId === id);
+      const mem = gameState.party.members.find(m => m.entityId === numId || m.entityId === strId || m.entityId === id);
       if (mem && mem.x != null && mem.z != null) {
         return {
           x: Math.round(mem.x),
@@ -1371,15 +1399,25 @@
     if (typeof obj.getState === 'function') {
       try {
         const state = obj.getState();
-        if (state && (typeof state.setTarget === 'function' || 'targetId' in state)) {
+        if (state && (typeof state.setTarget === 'function' || 'targetId' in state || 'target' in state)) {
           return true;
         }
       } catch (e) {}
     }
 
-    // 2. Direct state object / store with setTarget and targetId
-    if (typeof obj.setTarget === 'function' && 'targetId' in obj) {
+    // 2. Direct state object / store with setTarget and (targetId or target)
+    if (typeof obj.setTarget === 'function' && ('targetId' in obj || 'target' in obj)) {
       return true;
+    }
+
+    // 3. Zustand store with setState and subscribe
+    if (typeof obj.setState === 'function' && typeof obj.subscribe === 'function') {
+      try {
+        if (typeof obj.getState === 'function') {
+          const s = obj.getState();
+          if (s && ('targetId' in s || typeof s.setTarget === 'function')) return true;
+        }
+      } catch (e) {}
     }
 
     return false;
@@ -1394,7 +1432,15 @@
       return window.QQ;
     }
 
-    const candGlobals = [window.targetStore, window.useTargetStore, window.store, window.__STORE__, window.game, window.app, window.Client, window.core];
+    const candGlobals = [
+      window.QQ,
+      window.Q?.QQ, window.Q?.targetStore, window.Q?.store, window.Q?.target, window.Q,
+      window.targetStore, window.useTargetStore, window.store, window.__STORE__,
+      window.game?.targetStore, window.game?.store, window.game?.QQ, window.game,
+      window.app?.targetStore, window.app?.store, window.app,
+      window.Client?.targetStore, window.Client?.store, window.Client?.QQ, window.Client,
+      window.core?.targetStore, window.core?.store, window.core
+    ];
     for (const g of candGlobals) {
       if (isTargetStore(g)) {
         window.__SRO_TARGET_STORE__ = g;
@@ -1431,10 +1477,10 @@
       }
     } catch (e) {}
 
-    // 3. Search via party card / target frame React Fibers (fastest, most reliable)
+    // 3. Search via party card / target frame / action bar React Fibers (fastest, most reliable)
     try {
       const domTargets = document.querySelectorAll(
-        'button.party-card, [class*="party-card"], button[class*="party"], [class*="target-frame"], [class*="unit-frame"], [class*="action-bar"], #root'
+        'button.party-card, [class*="party-card"], button[class*="party"], [class*="target-frame"], [class*="unit-frame"], [class*="action-bar"], canvas, #root'
       );
       for (const el of domTargets) {
         const fiberKey = Object.keys(el).find(k => k.startsWith('__reactFiber') || k.startsWith('__reactInternalInstance'));
@@ -1442,7 +1488,7 @@
 
         let cur = el[fiberKey];
         let depth = 0;
-        while (cur && depth < 30) {
+        while (cur && depth < 35) {
           depth++;
           // Check memoizedState hooks
           let hook = cur.memoizedState;
@@ -1451,6 +1497,21 @@
               window.__SRO_TARGET_STORE__ = hook.memoizedState;
               window.QQ = hook.memoizedState;
               return hook.memoizedState;
+            }
+            if (hook.memoizedState?.current && isTargetStore(hook.memoizedState.current)) {
+              window.__SRO_TARGET_STORE__ = hook.memoizedState.current;
+              window.QQ = hook.memoizedState.current;
+              return hook.memoizedState.current;
+            }
+            if (typeof hook.memoizedState?.getSnapshot === 'function') {
+              try {
+                const snap = hook.memoizedState.getSnapshot();
+                if (isTargetStore(snap)) {
+                  window.__SRO_TARGET_STORE__ = snap;
+                  window.QQ = snap;
+                  return snap;
+                }
+              } catch (e) {}
             }
             if (isTargetStore(hook.queue)) {
               window.__SRO_TARGET_STORE__ = hook.queue;
@@ -1472,6 +1533,13 @@
             }
           }
 
+          // Check stateNode
+          if (cur.stateNode && isTargetStore(cur.stateNode)) {
+            window.__SRO_TARGET_STORE__ = cur.stateNode;
+            window.QQ = cur.stateNode;
+            return cur.stateNode;
+          }
+
           cur = cur.return;
         }
       }
@@ -1487,7 +1555,7 @@
           const visited = new Set();
           let iterations = 0;
 
-          while (stack.length > 0 && iterations < 2500) {
+          while (stack.length > 0 && iterations < 3000) {
             iterations++;
             const fiber = stack.pop();
             if (!fiber || visited.has(fiber)) continue;
@@ -1499,6 +1567,21 @@
                 window.__SRO_TARGET_STORE__ = hook.memoizedState;
                 window.QQ = hook.memoizedState;
                 return hook.memoizedState;
+              }
+              if (hook.memoizedState?.current && isTargetStore(hook.memoizedState.current)) {
+                window.__SRO_TARGET_STORE__ = hook.memoizedState.current;
+                window.QQ = hook.memoizedState.current;
+                return hook.memoizedState.current;
+              }
+              if (typeof hook.memoizedState?.getSnapshot === 'function') {
+                try {
+                  const snap = hook.memoizedState.getSnapshot();
+                  if (isTargetStore(snap)) {
+                    window.__SRO_TARGET_STORE__ = snap;
+                    window.QQ = snap;
+                    return snap;
+                  }
+                } catch (e) {}
               }
               if (isTargetStore(hook.queue)) {
                 window.__SRO_TARGET_STORE__ = hook.queue;
@@ -1519,6 +1602,12 @@
               }
             }
 
+            if (fiber.stateNode && isTargetStore(fiber.stateNode)) {
+              window.__SRO_TARGET_STORE__ = fiber.stateNode;
+              window.QQ = fiber.stateNode;
+              return fiber.stateNode;
+            }
+
             if (fiber.child) stack.push(fiber.child);
             if (fiber.sibling) stack.push(fiber.sibling);
           }
@@ -1529,58 +1618,97 @@
     return null;
   }
 
+  // Eager background discovery of native target store
+  setTimeout(() => { findZustandTargetStore(); }, 1200);
+  setTimeout(() => { findZustandTargetStore(); }, 3500);
+  setInterval(() => {
+    if (!window.__SRO_TARGET_STORE__) findZustandTargetStore();
+  }, 4000);
+
   function setClientTarget(targetId) {
     if (targetId == null) return false;
+    const numId = typeof targetId === 'string' && /^\d+$/.test(targetId) ? parseInt(targetId, 10) : targetId;
     const store = findZustandTargetStore();
-    if (!store) {
-      console.warn(`[Silkroad Bot Pro] ⚠️ Target store henüz bulunamadı, id: ${targetId}`);
-      return false;
+
+    let success = false;
+    if (store) {
+      try {
+        if (typeof store.getState === 'function') {
+          const state = store.getState();
+          if (typeof state?.setTarget === 'function') {
+            state.setTarget(numId);
+            success = true;
+          }
+          if (typeof store.setState === 'function') {
+            store.setState({ targetId: numId, target: numId });
+            success = true;
+          }
+        }
+        if (typeof store.setTarget === 'function') {
+          store.setTarget(numId);
+          success = true;
+        }
+        if (typeof store.setState === 'function' && !success) {
+          store.setState({ targetId: numId, target: numId });
+          success = true;
+        }
+      } catch (err) {
+        console.warn('[Silkroad Bot Pro] store setTarget error:', err);
+      }
     }
 
-    try {
-      if (typeof store.setTarget === 'function') {
-        store.setTarget(targetId);
-        console.log(`%c[Silkroad Bot Pro] 🎯 Hedef Zustand Store'a aktarıldı: [${targetId}] (setTarget)`, "color:#10b981;font-weight:bold;");
-        return true;
-      }
-      if (typeof store.getState === 'function') {
-        const state = store.getState();
-        if (typeof state?.setTarget === 'function') {
-          state.setTarget(targetId);
-          console.log(`%c[Silkroad Bot Pro] 🎯 Hedef Zustand Store'a aktarıldı: [${targetId}] (getState().setTarget)`, "color:#10b981;font-weight:bold;");
-          return true;
+    if (window.QQ && window.QQ !== store) {
+      try {
+        if (typeof window.QQ.getState === 'function') {
+          const s = window.QQ.getState();
+          if (typeof s?.setTarget === 'function') s.setTarget(numId);
+          if (typeof window.QQ.setState === 'function') window.QQ.setState({ targetId: numId, target: numId });
+        } else if (typeof window.QQ.setTarget === 'function') {
+          window.QQ.setTarget(numId);
+        } else if (typeof window.QQ === 'object') {
+          window.QQ.targetId = numId;
         }
-        if (typeof store.setState === 'function') {
-          store.setState({ targetId: targetId });
-          console.log(`%c[Silkroad Bot Pro] 🎯 Hedef Zustand Store'a aktarıldı: [${targetId}] (store.setState)`, "color:#10b981;font-weight:bold;");
-          return true;
-        }
-      }
-      if (typeof store.setState === 'function') {
-        store.setState({ targetId: targetId });
-        console.log(`%c[Silkroad Bot Pro] 🎯 Hedef Zustand Store'a aktarıldı: [${targetId}] (setState)`, "color:#10b981;font-weight:bold;");
-        return true;
-      }
-    } catch (err) {
-      console.warn('[Silkroad Bot Pro] setClientTarget error:', err);
+      } catch (e) {}
     }
-    return false;
+
+    if (store && !window.QQ) {
+      window.QQ = store;
+    }
+
+    if (success) {
+      console.log(`%c[Silkroad Bot Pro] 🎯 Hedef Zustand Store'a aktarıldı: [${numId}]`, "color:#10b981;font-weight:bold;");
+    } else {
+      console.warn(`[Silkroad Bot Pro] ⚠️ Target store henüz bulunamadı, id: ${numId}`);
+    }
+    return success;
   }
 
   function clearClientTarget() {
     const store = findZustandTargetStore();
-    if (!store) return;
-    try {
-      if (typeof store.setTarget === 'function') {
-        store.setTarget(null);
-      } else if (typeof store.getState === 'function') {
-        const state = store.getState();
-        if (typeof state?.setTarget === 'function') state.setTarget(null);
-        else if (typeof store.setState === 'function') store.setState({ targetId: null });
-      } else if (typeof store.setState === 'function') {
-        store.setState({ targetId: null });
-      }
-    } catch (e) {}
+    if (store) {
+      try {
+        if (typeof store.getState === 'function') {
+          const state = store.getState();
+          if (typeof state?.setTarget === 'function') state.setTarget(null);
+          if (typeof store.setState === 'function') store.setState({ targetId: null, target: null });
+        }
+        if (typeof store.setTarget === 'function') store.setTarget(null);
+        if (typeof store.setState === 'function') store.setState({ targetId: null, target: null });
+      } catch (e) {}
+    }
+    if (window.QQ) {
+      try {
+        if (typeof window.QQ.getState === 'function') {
+          const s = window.QQ.getState();
+          if (typeof s?.setTarget === 'function') s.setTarget(null);
+          if (typeof window.QQ.setState === 'function') window.QQ.setState({ targetId: null, target: null });
+        } else if (typeof window.QQ.setTarget === 'function') {
+          window.QQ.setTarget(null);
+        } else if (typeof window.QQ === 'object') {
+          window.QQ.targetId = null;
+        }
+      } catch (e) {}
+    }
   }
 
   function notifyContentScript(type, payload) {
