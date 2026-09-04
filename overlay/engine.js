@@ -87,6 +87,9 @@ class SroBotEngine {
     this.consecutiveRateLimits = 0;
     this.lastRateLimitTime = 0;
     this.lastActionOrProgressTime = Date.now();
+    this.buffTickerInterval = null;
+    this.apmTickerInterval = null;
+    this.partyTraceInterval = null;
 
     // Callbacks
     this.onStateChange = null;
@@ -206,6 +209,9 @@ class SroBotEngine {
     this.stats.actionsCount++;
     this.stats.actionTimestamps.push(Date.now());
     this.lastActionOrProgressTime = Date.now();
+    this.buffTickerInterval = null;
+    this.apmTickerInterval = null;
+    this.partyTraceInterval = null;
     this.keyDispatcher(key, durationMs);
   }
 
@@ -269,6 +275,7 @@ class SroBotEngine {
    * 1. STAT ALLOCATION & MULTI MASTERY UPGRADE
    * ========================================================================= */
   checkAndAllocateStats() {
+    if (!this.running || this.paused) return;
     if (!this.config.autoProgression?.autoStatEnabled) return;
     const unspent = this.telemetry.player.unspentStats || 0;
     if (unspent <= 0) return;
@@ -304,6 +311,7 @@ class SroBotEngine {
   }
 
   checkAndUpgradeMasteries() {
+    if (!this.running || this.paused) return;
     if (!this.config.autoProgression?.autoMasteryEnabled) return;
 
     const p = this.telemetry.player;
@@ -353,19 +361,26 @@ class SroBotEngine {
   }
 
   async executeDynamicBuff(buff) {
+    if (!this.running || this.paused) return;
     if (!buff || !buff.enabled) return;
     this.buffExecutionInProgress = true;
 
+    const needSwap = this.config.buffs?.autoWeaponSwap && buff.weaponReq && buff.weaponReq !== 'none';
+    const mainWep = this.config.buffs?.mainWeapon || 'auto';
+    const pageKey = buff.page;
+    const needPageSwitch = pageKey && pageKey !== 'current' && pageKey !== 'F1';
+
     try {
-      const needSwap = this.config.buffs?.autoWeaponSwap && buff.weaponReq && buff.weaponReq !== 'none';
       if (needSwap) {
         this.log('SWAP', `⚔️ Buff için [${buff.weaponReq.toUpperCase()}] takılıyor...`, 'info');
         this.weaponDispatcher({
           weaponType: buff.weaponReq,
           equipShield: this.config.buffs?.equipShield !== false && buff.weaponReq === 'cleric'
         });
-        await this.sleep(450);
+        await this.sleep(900);
       }
+
+      if (!this.running || this.paused) return;
 
       // Single-Target Party Buff: Target the specific party member first
       if (buff.targetType === 'party_single' && buff.partyMemberName) {
@@ -378,55 +393,57 @@ class SroBotEngine {
         }
       }
 
+      if (!this.running || this.paused) return;
+
       // Hotbar Page switch (F1, F2, F3, F4)
-      const pageKey = buff.page;
-      const needPageSwitch = pageKey && pageKey !== 'current' && pageKey !== 'F1';
       if (needPageSwitch) {
         this.dispatchKey(pageKey, 60);
         await this.sleep(220);
       }
 
+      if (!this.running || this.paused) return;
+
       // Slot key press
       const slotKey = buff.slot || '1';
       this.log('BUFF', `🛡️ Buff Basılıyor: ${buff.name} [Sayfa: ${pageKey || 'Mevcut'} | Slot: ${slotKey}]`, 'info');
       this.dispatchKey(slotKey, 60);
-      await this.sleep(this.applyJitter((buff.castDelayMs || 400) + (this.throttlePenaltyMs || 0)));
+      const castWait = Math.max(900, (buff.castDelayMs || 500) + (this.throttlePenaltyMs || 0));
+      await this.sleep(this.applyJitter(castWait));
 
-      // Restore hotbar page to F1
+    } catch (e) {
+      console.error('[SRO Bot] Buff execution error:', e);
+    } finally {
+      // ALWAYS restore hotbar page to F1
       if (needPageSwitch) {
         this.dispatchKey('F1', 60);
         await this.sleep(200);
       }
 
-      // Restore main weapon
+      // ALWAYS restore main weapon
       if (needSwap) {
-        const mainWep = this.config.buffs?.mainWeapon || 'auto';
         this.log('SWAP', `⚔️ Ana silaha dönülüyor: [${mainWep.toUpperCase()}]`, 'info');
         this.weaponDispatcher({ weaponType: mainWep, equipShield: false });
-        // Full weapon swap animation cooldown (850ms)
-        await this.sleep(850);
-        // Ensure combat hotbar (F1) is restored
+        await this.sleep(950);
         this.dispatchKey('F1', 60);
         await this.sleep(150);
 
-        // Silkroad drops game target when weapons are swapped! Clear stale target state so bot re-acquires immediately
         this.telemetry.target.hasTarget = false;
         this.telemetry.target.id = null;
         this.clearTargetDispatcher();
       }
-    } catch (e) {
-      console.error('[SRO Bot] Buff execution error:', e);
-    } finally {
+
       this.buffExecutionInProgress = false;
     }
   }
 
   async checkAndExecuteDynamicBuffs() {
+    if (!this.running || this.paused) return;
     if (this.buffExecutionInProgress) return;
     const now = Date.now();
     const list = this.getBuffList();
 
     for (const buff of list) {
+      if (!this.running || this.paused) break;
       if (!buff.enabled) continue;
       const lastTime = this.buffTimers[buff.id] || 0;
       const intervalMs = (buff.intervalSec || 120) * 1000;
@@ -434,64 +451,75 @@ class SroBotEngine {
       if (now - lastTime > intervalMs) {
         this.buffTimers[buff.id] = now;
         await this.executeDynamicBuff(buff);
-        await this.sleep(300);
+        await this.sleep(350);
       }
     }
   }
 
   async checkAndExecuteAutoRes() {
+    if (!this.running || this.paused) return;
     if (!this.config.party?.autoResEnabled || this.buffExecutionInProgress) return;
     const members = this.telemetry.party?.members || [];
     const deadMember = members.find(m => m.dead || m.hp === 0);
 
     if (deadMember) {
       const now = Date.now();
-      if (!this.lastResAttemptTime || (now - this.lastResAttemptTime > 6000)) {
+      if (!this.lastResAttemptTime || (now - this.lastResAttemptTime > 8000)) {
         this.lastResAttemptTime = now;
         const resPage = this.config.party.resPage || 'F2';
         const resSlot = this.config.party.resSlot || '8';
         this.log('PARTY', `✝️ [${deadMember.name}] öldü! Canlandırma (Res) [${resPage !== 'current' ? resPage + '-' : ''}${resSlot}] uygulanıyor...`, 'warn');
         this.buffExecutionInProgress = true;
 
+        const needSwap = this.config.buffs?.autoWeaponSwap;
+        const needPageSwitch = resPage && resPage !== 'current' && resPage !== 'F1';
+        const mainWep = this.config.buffs?.mainWeapon || 'auto';
+
         try {
-          const needSwap = this.config.buffs?.autoWeaponSwap;
           if (needSwap) {
             this.log('SWAP', `⚔️ Res için Cleric Rod'a geçiliyor...`, 'info');
             this.weaponDispatcher({ weaponType: 'cleric', equipShield: this.config.buffs?.equipShield !== false });
-            await this.sleep(450);
+            await this.sleep(900);
           }
+
+          if (!this.running || this.paused) return;
 
           if (deadMember.entityId) {
             this.targetDispatcher({ id: deadMember.entityId });
             await this.sleep(250);
           }
 
-          const needPageSwitch = resPage && resPage !== 'current' && resPage !== 'F1';
+          if (!this.running || this.paused) return;
+
           if (needPageSwitch) {
             this.dispatchKey(resPage, 60);
             await this.sleep(220);
           }
 
-          this.dispatchKey(resSlot, 60);
-          await this.sleep(750);
+          if (!this.running || this.paused) return;
 
+          this.dispatchKey(resSlot, 60);
+          await this.sleep(1200);
+
+        } catch (err) {
+          console.error('[SRO Bot] Auto Res error:', err);
+        } finally {
           if (needPageSwitch) {
             this.dispatchKey('F1', 60);
             await this.sleep(200);
           }
 
           if (needSwap) {
-            const mainWep = this.config.buffs?.mainWeapon || 'auto';
             this.log('SWAP', `⚔️ Ana silaha dönülüyor: [${mainWep.toUpperCase()}]`, 'info');
             this.weaponDispatcher({ weaponType: mainWep, equipShield: false });
-            await this.sleep(850);
+            await this.sleep(950);
             this.dispatchKey('F1', 60);
             await this.sleep(150);
             this.telemetry.target.hasTarget = false;
             this.telemetry.target.id = null;
             this.clearTargetDispatcher();
           }
-        } finally {
+
           this.buffExecutionInProgress = false;
         }
       }
@@ -499,6 +527,7 @@ class SroBotEngine {
   }
 
   traceSpecificMember(memberName) {
+    if (!this.running || this.paused) return;
     if (!memberName) return;
     // PAUSE movement during combat: in Silkroad moving cancels skill cast animations!
     if (this.state === 'ATTACKING' || (this.telemetry.target.hasTarget && !this.telemetry.target.isDead)) {
@@ -532,6 +561,7 @@ class SroBotEngine {
   }
 
   checkAndExecuteAutoTrace() {
+    if (!this.running || this.paused) return;
     if (!this.config.party?.autoTraceEnabled) return;
     // PAUSE movement during combat: in Silkroad moving cancels skill cast animations!
     if (this.state === 'ATTACKING' || (this.telemetry.target.hasTarget && !this.telemetry.target.isDead)) {
@@ -621,8 +651,10 @@ class SroBotEngine {
   handlePartyUpdate(partyData) {
     if (!partyData) return;
     this.telemetry.party = partyData;
-    this.checkAndExecuteAutoTrace();
-    this.checkAndExecuteAutoRes();
+    if (this.running && !this.paused) {
+      this.checkAndExecuteAutoTrace();
+      this.checkAndExecuteAutoRes();
+    }
     if (this.onTelemetryUpdate) {
       this.onTelemetryUpdate(this.telemetry);
     }
@@ -678,6 +710,10 @@ class SroBotEngine {
       });
     }
 
+    if (this.buffTickerInterval) clearInterval(this.buffTickerInterval);
+    if (this.apmTickerInterval) clearInterval(this.apmTickerInterval);
+    if (this.partyTraceInterval) clearInterval(this.partyTraceInterval);
+
     this.startBuffTicker();
     this.startApmTicker();
     this.startPartyTraceTicker();
@@ -688,6 +724,21 @@ class SroBotEngine {
     if (!this.running) return;
     this.running = false;
     this.paused = false;
+    this.buffExecutionInProgress = false;
+
+    if (this.buffTickerInterval) {
+      clearInterval(this.buffTickerInterval);
+      this.buffTickerInterval = null;
+    }
+    if (this.apmTickerInterval) {
+      clearInterval(this.apmTickerInterval);
+      this.apmTickerInterval = null;
+    }
+    if (this.partyTraceInterval) {
+      clearInterval(this.partyTraceInterval);
+      this.partyTraceInterval = null;
+    }
+
     this.setState('IDLE');
     this.audio.playStop();
     this.log('SYS', '🛑 Bot durduruldu.', 'warn');
@@ -834,7 +885,6 @@ class SroBotEngine {
                 t: 'combat.attack',
                 d: { id: targetMobId }
               });
-              this.dispatchKey('Tab', 50);
 
               this.log('TARGET', `🎯 Parti Üyesi [${memberName}] hedefine kilitlenildi: [${this.telemetry.target.name}]`, 'success');
               await this.sleep(150);
@@ -1038,7 +1088,8 @@ class SroBotEngine {
    * 5. TICKERS & STATS
    * ========================================================================= */
   startBuffTicker() {
-    setInterval(() => {
+    if (this.buffTickerInterval) clearInterval(this.buffTickerInterval);
+    this.buffTickerInterval = setInterval(() => {
       if (this.running && !this.paused) {
         this.checkAndExecuteDynamicBuffs();
         this.checkAndUpgradeMasteries();
@@ -1048,6 +1099,7 @@ class SroBotEngine {
   }
 
   checkAndUseSpeedScroll() {
+    if (!this.running || this.paused) return;
     if (!this.config.buffs || this.config.buffs.autoSpeedScroll === false) return;
     const now = Date.now();
 
@@ -1077,7 +1129,8 @@ class SroBotEngine {
   }
 
   startPartyTraceTicker() {
-    setInterval(() => {
+    if (this.partyTraceInterval) clearInterval(this.partyTraceInterval);
+    this.partyTraceInterval = setInterval(() => {
       if (this.running && !this.paused) {
         this.checkAndExecuteAutoTrace();
         this.checkAndExecuteAutoRes();
@@ -1086,7 +1139,8 @@ class SroBotEngine {
   }
 
   startApmTicker() {
-    setInterval(() => {
+    if (this.apmTickerInterval) clearInterval(this.apmTickerInterval);
+    this.apmTickerInterval = setInterval(() => {
       const oneMinuteAgo = Date.now() - 60000;
       this.stats.actionTimestamps = this.stats.actionTimestamps.filter(t => t > oneMinuteAgo);
       this.stats.apm = this.stats.actionTimestamps.length;

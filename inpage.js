@@ -971,45 +971,79 @@
 
   function unequipShield() {
     sendPacket({ t: 'inv.unequip', d: { slot: 'shield' } });
+    sendPacket({ t: 'inv.unequip', d: { equipSlot: 'shield' } });
     sendPacket({ t: 'inv.use', d: { equipSlot: 'shield' } });
     sendPacket({ t: 'inv.use', d: { slot: 'shield' } });
+    try {
+      const shieldSlotEl = document.querySelector('[data-slot="shield"], [data-equip="shield"], .slot-shield, [aria-label*="shield" i]');
+      if (shieldSlotEl) shieldSlotEl.click();
+    } catch (e) {}
   }
 
-  function equipWeaponByType(type) {
+  function equipWeaponByType(type, wantEquipShield = false) {
     const normalized = (type || "").toLowerCase().trim();
     const is2Handed = normalized.includes('staff') || normalized.includes('wizard') || normalized.includes('harp') || normalized.includes('tsword') || normalized.includes('bow') || normalized.includes('spear');
 
-    // If equipping a 2-handed weapon, unequip shield first so server doesn't reject!
-    if (is2Handed) {
-      unequipShield();
-    }
+    const doEquip = (slot, itemId) => {
+      console.log(`%c[Silkroad Bot Pro] ⚔️ Silah Takılıyor: Slot ${slot} (${itemId})`, "color:#f39c12;font-weight:bold;");
+      sendPacket({ t: 'inv.use', d: { bagSlot: slot } });
+    };
 
-    const found = findWeaponInBag(type);
-    if (found) {
-      console.log(`%c[Silkroad Bot Pro] ⚔️ Silah Değiştiriliyor: [${type.toUpperCase()}] -> Slot ${found.slot} (${found.item.itemId})`, "color:#f39c12;font-weight:bold;");
-      sendPacket({
-        t: 'inv.use',
-        d: { bagSlot: found.slot }
-      });
+    if (is2Handed) {
+      // 1. Unequip shield first
+      unequipShield();
+      // 2. Wait 250ms for server before equipping 2-handed weapon!
+      setTimeout(() => {
+        const found = findWeaponInBag(type);
+        if (found) {
+          doEquip(found.slot, found.item.itemId);
+        } else if (type === 'auto' || type === 'main') {
+          findAndEquipMainFallback(false);
+        }
+      }, 250);
       return true;
     }
-    // Fallback: If 'auto' or main weapon, pick the first weapon in bag that is not a cleric rod or harp or shield
+
+    // 1-Handed weapon (e.g. cleric rod, 1h sword)
+    const found = findWeaponInBag(type);
+    if (found) {
+      doEquip(found.slot, found.item.itemId);
+      if (wantEquipShield) {
+        setTimeout(() => equipShield(), 250);
+      }
+      return true;
+    }
+
     if (type === 'auto' || type === 'main') {
-      const bag = gameState.player.inventory?.bag || [];
-      for (let slot = 0; slot < bag.length; slot++) {
-        const item = bag[slot];
-        if (!item || !item.itemId) continue;
-        const id = item.itemId.toLowerCase();
-        const isClericOrBard = id.includes('rod') || id.includes('cleric') || id.includes('wand') || id.includes('harp');
-        const isWeapon = id.includes('staff') || id.includes('sword') || id.includes('spear') || id.includes('blade') || id.includes('bow') || id.includes('axe') || id.includes('glavie') || id.includes('tsword');
-        if (!isClericOrBard && !id.includes('shield') && isWeapon) {
-          if (id.includes('staff') || id.includes('tsword') || id.includes('bow') || id.includes('spear')) {
-            unequipShield();
-          }
+      return findAndEquipMainFallback(wantEquipShield);
+    }
+    return false;
+  }
+
+  function findAndEquipMainFallback(wantEquipShield = false) {
+    const bag = gameState.player.inventory?.bag || [];
+    for (let slot = 0; slot < bag.length; slot++) {
+      const item = bag[slot];
+      if (!item || !item.itemId) continue;
+      const id = item.itemId.toLowerCase();
+      const isClericOrBard = id.includes('rod') || id.includes('cleric') || id.includes('wand') || id.includes('harp');
+      const isWeapon = id.includes('staff') || id.includes('sword') || id.includes('spear') || id.includes('blade') || id.includes('bow') || id.includes('axe') || id.includes('glavie') || id.includes('tsword');
+      if (!isClericOrBard && !id.includes('shield') && isWeapon) {
+        const is2H = id.includes('staff') || id.includes('tsword') || id.includes('bow') || id.includes('spear');
+        if (is2H) {
+          unequipShield();
+          setTimeout(() => {
+            console.log(`%c[Silkroad Bot Pro] ⚔️ Ana Silaha Dönülüyor (2H): Slot ${slot} (${item.itemId})`, "color:#f39c12;font-weight:bold;");
+            sendPacket({ t: 'inv.use', d: { bagSlot: slot } });
+          }, 250);
+        } else {
           console.log(`%c[Silkroad Bot Pro] ⚔️ Ana Silaha Dönülüyor: Slot ${slot} (${item.itemId})`, "color:#f39c12;font-weight:bold;");
           sendPacket({ t: 'inv.use', d: { bagSlot: slot } });
-          return true;
+          if (wantEquipShield) {
+            setTimeout(() => equipShield(), 250);
+          }
         }
+        return true;
       }
     }
     return false;
@@ -1120,10 +1154,7 @@
     } else if (type === 'SCAN_SKILLS_REQUEST') {
       window.scanGameSkills();
     } else if (type === 'SWAP_WEAPON') {
-      equipWeaponByType(payload?.weaponType);
-      if (payload?.equipShield) {
-        setTimeout(() => equipShield(), 180);
-      }
+      equipWeaponByType(payload?.weaponType, payload?.equipShield);
     } else if (type === 'SET_ASSIST_CONFIG') {
       if (payload?.assistMemberName !== undefined) gameState.settings.assistMemberName = payload.assistMemberName;
       if (payload?.autoAcceptRes !== undefined) gameState.settings.autoAcceptRes = payload.autoAcceptRes;
