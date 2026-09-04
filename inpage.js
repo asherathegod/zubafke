@@ -275,6 +275,25 @@
       }
     }
 
+    // Entity HP Update (Party Members & Target Live HP/MaxHP)
+    if (type === 'entity.hp' && data) {
+      if (gameState.party?.members) {
+        const member = gameState.party.members.find(m => m.entityId === data.id);
+        if (member) {
+          if (data.hp !== undefined) member.hp = data.hp;
+          if (data.maxHp !== undefined) member.maxHp = data.maxHp;
+          notifyContentScript('PARTY_UPDATED', { party: gameState.party });
+        }
+      }
+      if (data.id === gameState.target?.id) {
+        gameState.target.hpCurrent = data.hp;
+        if (data.maxHp !== undefined) gameState.target.hpMax = data.maxHp;
+        if (gameState.target.hpMax > 0) {
+          gameState.target.hpPercent = Math.round((data.hp / gameState.target.hpMax) * 100);
+        }
+      }
+    }
+
     // Buffs Update directly from server
     if (type === 'buffs.update' && data) {
       if (data.id === localPlayerId || !localPlayerId) {
@@ -883,46 +902,88 @@
       if (!item || !item.itemId) continue;
       const id = item.itemId.toLowerCase();
 
-      if (normalized === 'cleric' || normalized === 'rod' || normalized === 'eu_staff') {
-        if (id.startsWith('eu_staff') || id.includes('cleric') || id.includes('wand')) {
+      // Cleric Rod (1H) - NEVER match staff!
+      if (normalized === 'cleric' || normalized === 'rod') {
+        if ((id.includes('rod') || id.includes('cleric') || id.includes('wand') || id.startsWith('eu_crod')) && !id.includes('staff')) {
           return { slot, item };
         }
-      } else if (normalized === 'bard' || normalized === 'harp' || normalized === 'eu_harp') {
-        if (id.startsWith('eu_harp') || id.includes('harp')) {
+      }
+      // Bard Harp (2H)
+      else if (normalized === 'bard' || normalized === 'harp' || normalized === 'eu_harp') {
+        if (id.includes('harp') || id.includes('bard') || id.startsWith('eu_harp')) {
           return { slot, item };
         }
-      } else if (normalized === 'wizard' || normalized === 'staff' || normalized === 'eu_tstaff') {
-        if (id.startsWith('eu_tstaff') || id.includes('staff')) {
+      }
+      // Wizard Staff (2H)
+      else if (normalized === 'wizard' || normalized === 'staff' || normalized === 'eu_tstaff') {
+        if (id.includes('staff') || id.includes('wizard') || id.startsWith('eu_tstaff')) {
           return { slot, item };
         }
-      } else if (normalized === 'shield' || normalized === 'eu_shield' || normalized === 'ch_shield') {
+      }
+      // Shield
+      else if (normalized === 'shield' || normalized === 'eu_shield' || normalized === 'ch_shield') {
         if (id.includes('shield')) {
           return { slot, item };
         }
-      } else if (normalized === 'warrior_2h' || normalized === 'eu_tsword') {
-        if (id.startsWith('eu_tsword') || id.includes('tsword')) {
+      }
+      // Warrior 2H Sword
+      else if (normalized === 'warrior_2h' || normalized === 'eu_tsword') {
+        if (id.includes('tsword') || id.includes('twohand') || id.startsWith('eu_tsword')) {
           return { slot, item };
         }
-      } else if (normalized === 'warrior_1h' || normalized === 'eu_sword') {
+      }
+      // Warrior 1H Sword
+      else if (normalized === 'warrior_1h' || normalized === 'eu_sword') {
         if (id.startsWith('eu_sword') || (id.includes('sword') && !id.includes('tsword'))) {
           return { slot, item };
         }
-      } else if (normalized === 'axe' || normalized === 'eu_axe') {
-        if (id.startsWith('eu_axe')) {
+      }
+      // Warrior Dual Axe
+      else if (normalized === 'axe' || normalized === 'eu_axe') {
+        if (id.includes('axe') || id.startsWith('eu_axe')) {
           return { slot, item };
         }
-      } else if (normalized === 'bow' || id.includes('bow')) {
+      }
+      // Bow
+      else if (normalized === 'bow') {
         if (id.includes('bow')) {
           return { slot, item };
         }
-      } else if (id.includes(normalized)) {
+      }
+      // Spear / Glavie
+      else if (normalized === 'spear' || normalized === 'glavie') {
+        if (id.includes('spear') || id.includes('glavie')) {
+          return { slot, item };
+        }
+      }
+      // Sword / Blade (Chinese)
+      else if (normalized === 'sword' || normalized === 'blade') {
+        if (id.includes('sword') || id.includes('blade')) {
+          return { slot, item };
+        }
+      }
+      else if (id.includes(normalized)) {
         return { slot, item };
       }
     }
     return null;
   }
 
+  function unequipShield() {
+    sendPacket({ t: 'inv.unequip', d: { slot: 'shield' } });
+    sendPacket({ t: 'inv.use', d: { equipSlot: 'shield' } });
+    sendPacket({ t: 'inv.use', d: { slot: 'shield' } });
+  }
+
   function equipWeaponByType(type) {
+    const normalized = (type || "").toLowerCase().trim();
+    const is2Handed = normalized.includes('staff') || normalized.includes('wizard') || normalized.includes('harp') || normalized.includes('tsword') || normalized.includes('bow') || normalized.includes('spear');
+
+    // If equipping a 2-handed weapon, unequip shield first so server doesn't reject!
+    if (is2Handed) {
+      unequipShield();
+    }
+
     const found = findWeaponInBag(type);
     if (found) {
       console.log(`%c[Silkroad Bot Pro] ⚔️ Silah Değiştiriliyor: [${type.toUpperCase()}] -> Slot ${found.slot} (${found.item.itemId})`, "color:#f39c12;font-weight:bold;");
@@ -932,14 +993,19 @@
       });
       return true;
     }
-    // Fallback: If 'auto' or main weapon, pick the first weapon in bag that is not a rod/harp
+    // Fallback: If 'auto' or main weapon, pick the first weapon in bag that is not a cleric rod or harp or shield
     if (type === 'auto' || type === 'main') {
       const bag = gameState.player.inventory?.bag || [];
       for (let slot = 0; slot < bag.length; slot++) {
         const item = bag[slot];
         if (!item || !item.itemId) continue;
         const id = item.itemId.toLowerCase();
-        if ((id.startsWith('eu_') || id.startsWith('ch_')) && !id.startsWith('eu_staff') && !id.startsWith('eu_harp') && !id.includes('shield')) {
+        const isClericOrBard = id.includes('rod') || id.includes('cleric') || id.includes('wand') || id.includes('harp');
+        const isWeapon = id.includes('staff') || id.includes('sword') || id.includes('spear') || id.includes('blade') || id.includes('bow') || id.includes('axe') || id.includes('glavie') || id.includes('tsword');
+        if (!isClericOrBard && !id.includes('shield') && isWeapon) {
+          if (id.includes('staff') || id.includes('tsword') || id.includes('bow') || id.includes('spear')) {
+            unequipShield();
+          }
           console.log(`%c[Silkroad Bot Pro] ⚔️ Ana Silaha Dönülüyor: Slot ${slot} (${item.itemId})`, "color:#f39c12;font-weight:bold;");
           sendPacket({ t: 'inv.use', d: { bagSlot: slot } });
           return true;

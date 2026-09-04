@@ -403,7 +403,16 @@ class SroBotEngine {
         const mainWep = this.config.buffs?.mainWeapon || 'auto';
         this.log('SWAP', `⚔️ Ana silaha dönülüyor: [${mainWep.toUpperCase()}]`, 'info');
         this.weaponDispatcher({ weaponType: mainWep, equipShield: false });
-        await this.sleep(450);
+        // Full weapon swap animation cooldown (850ms)
+        await this.sleep(850);
+        // Ensure combat hotbar (F1) is restored
+        this.dispatchKey('F1', 60);
+        await this.sleep(150);
+
+        // Silkroad drops game target when weapons are swapped! Clear stale target state so bot re-acquires immediately
+        this.telemetry.target.hasTarget = false;
+        this.telemetry.target.id = null;
+        this.clearTargetDispatcher();
       }
     } catch (e) {
       console.error('[SRO Bot] Buff execution error:', e);
@@ -475,7 +484,12 @@ class SroBotEngine {
             const mainWep = this.config.buffs?.mainWeapon || 'auto';
             this.log('SWAP', `⚔️ Ana silaha dönülüyor: [${mainWep.toUpperCase()}]`, 'info');
             this.weaponDispatcher({ weaponType: mainWep, equipShield: false });
-            await this.sleep(450);
+            await this.sleep(850);
+            this.dispatchKey('F1', 60);
+            await this.sleep(150);
+            this.telemetry.target.hasTarget = false;
+            this.telemetry.target.id = null;
+            this.clearTargetDispatcher();
           }
         } finally {
           this.buffExecutionInProgress = false;

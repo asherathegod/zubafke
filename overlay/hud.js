@@ -42,7 +42,7 @@ class SroHudController {
           <div class="sro-title-box">
             <span style="font-size:16px;">⚔️</span>
             <span class="sro-title">Silkroad Macro Bot Pro</span>
-            <span style="font-size:10px;background:#b45309;color:#fff;padding:1px 5px;border-radius:3px;font-weight:bold;">v3.6.4 Pro</span>
+            <span style="font-size:10px;background:#b45309;color:#fff;padding:1px 5px;border-radius:3px;font-weight:bold;">v3.6.5 Pro</span>
           </div>
           <div class="sro-header-controls">
             <button id="sro-minimize-btn" class="sro-icon-btn" title="Simge Durumuna Küçült">—</button>
@@ -361,7 +361,7 @@ class SroHudController {
               <div style="display:flex;justify-content:space-between;align-items:center;">
                 <div>
                   <strong style="color:#60a5fa;font-size:12px;">🚀 Bot Sürümü & Otomatik Güncelleme</strong>
-                  <div style="font-size:10px;color:#cbd5e1;margin-top:2px;">Mevcut Sürüm: <span style="color:#f1c40f;font-weight:bold;">v3.6.4 Pro</span></div>
+                  <div style="font-size:10px;color:#cbd5e1;margin-top:2px;">Mevcut Sürüm: <span style="color:#f1c40f;font-weight:bold;">v3.6.5 Pro</span></div>
                 </div>
                 <button id="btn-check-updates" class="sro-btn sro-btn-primary" style="font-size:10px;padding:4px 10px;">🔄 Güncellemeleri Denetle</button>
               </div>
@@ -1150,17 +1150,38 @@ class SroHudController {
       return;
     }
 
-    listEl.innerHTML = members.map(m => `
-      <div style="background:rgba(15,23,42,0.8);border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:6px 8px;display:flex;justify-content:space-between;align-items:center;">
-        <div>
-          <span style="font-weight:600;color:#f8fafc;font-size:11px;">${m.name}</span>
-          <span style="font-size:9px;color:#94a3b8;margin-left:4px;">Lv.${m.level || '?'}</span>
+    listEl.innerHTML = members.map(m => {
+      const isDead = m.dead || m.hp === 0;
+      const hpPct = (m.maxHp && m.maxHp > 0) ? Math.min(100, Math.max(0, Math.round((m.hp / m.maxHp) * 100))) : (m.hpPercent ?? 100);
+      const mpPct = (m.maxMp && m.maxMp > 0) ? Math.min(100, Math.max(0, Math.round((m.mp / m.maxMp) * 100))) : (m.mpPercent ?? 100);
+      const hpColor = hpPct > 50 ? '#22c55e' : (hpPct > 25 ? '#f59e0b' : '#ef4444');
+
+      return `
+        <div style="background:rgba(15,23,42,0.85);border:1px solid rgba(255,255,255,0.08);border-radius:6px;padding:6px 8px;margin-bottom:6px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;">
+            <div>
+              <span style="font-weight:700;color:#f8fafc;font-size:11px;">${m.name}</span>
+              <span style="font-size:9px;color:#94a3b8;margin-left:4px;">Lv.${m.level || '?'}</span>
+            </div>
+            <div style="font-size:10px;font-weight:bold;color:${isDead ? '#ef4444' : hpColor};">
+              ${isDead ? '💀 ÖLÜ' : `%${hpPct} HP`}
+            </div>
+          </div>
+          <!-- HP Bar -->
+          <div style="background:rgba(0,0,0,0.5);border-radius:3px;height:6px;overflow:hidden;margin-bottom:2px;">
+            <div style="background:${hpColor};height:100%;width:${isDead ? 0 : hpPct}%;transition:width 0.3s ease;"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:9px;color:#94a3b8;margin-bottom:2px;">
+            <span>HP: <strong style="color:#cbd5e1;">${m.hp != null ? m.hp : '?'}/${m.maxHp != null ? m.maxHp : '?'}</strong></span>
+            <span>MP: <strong style="color:#60a5fa;">${m.mp != null ? m.mp : '?'}/${m.maxMp != null ? m.maxMp : '?'}</strong></span>
+          </div>
+          <!-- MP Bar -->
+          <div style="background:rgba(0,0,0,0.5);border-radius:3px;height:4px;overflow:hidden;">
+            <div style="background:#3b82f6;height:100%;width:${isDead ? 0 : mpPct}%;transition:width 0.3s ease;"></div>
+          </div>
         </div>
-        <div style="font-size:10px;font-weight:bold;color:${m.dead ? '#ef4444' : '#2ecc71'};">
-          ${m.dead ? '💀 ÖLÜ' : '❤️ %' + (m.hpPercent || 100)}
-        </div>
-      </div>
-    `).join('');
+      `;
+    }).join('');
   }
 
   renderUniquesList() {
