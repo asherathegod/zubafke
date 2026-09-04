@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Silkroad Web Bot Pro</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    
+    <!-- Header -->
+    <div class="popup-header">
+      <div class="logo-box">
+        <span class="logo-icon">⚔️</span>
+        <span class="logo-title">SILKROAD BOT PRO</span>
+      </div>
+      <span id="popup-status-badge" class="status-badge status-idle">IDLE</span>
+    </div>
+
+    <!-- Live Telemetry Card -->
+    <div class="card telemetry-card">
+      <div class="card-row">
+        <span class="label">Canlı Hedef:</span>
+        <span id="popup-target-name" class="val val-gold">Aranıyor / Yok</span>
+      </div>
+      <div class="hp-bar-track">
+        <div id="popup-target-hp" class="hp-bar-fill" style="width: 0%;"></div>
+      </div>
+    </div>
+
+    <!-- Quick Stats -->
+    <div class="stats-grid">
+      <div class="stat-box">
+        <div id="stat-kills" class="stat-val">0</div>
+        <div class="stat-lbl">Kesilen Mob</div>
+      </div>
+      <div class="stat-box">
+        <div id="stat-skills" class="stat-val">0</div>
+        <div class="stat-lbl">Skill Atışı</div>
+      </div>
+      <div class="stat-box">
+        <div id="stat-apm" class="stat-val">0</div>
+        <div class="stat-lbl">Canlı APM</div>
+      </div>
+    </div>
+
+    <!-- Action Buttons -->
+    <div class="action-buttons">
+      <button id="btn-toggle-bot" class="btn btn-primary">▶ BOTU BAŞLAT (F8)</button>
+      <button id="btn-toggle-hud" class="btn btn-secondary">🖥️ Oyun İçi HUD'u Aç / Kapat</button>
+    </div>
+
+    <!-- Footer -->
+    <div class="popup-footer">
+      <span>Kısayol: <strong>F8</strong> veya <strong>Ctrl+Shift+S</strong></span>
+    </div>
+
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

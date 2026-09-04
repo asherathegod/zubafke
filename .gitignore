@@ -1,0 +1,9 @@
+# Huge map tiles (42,000+ files)
+overlay/minimap/
+overlay/world_map.png
+
+# Temporary and scratch
+scratch/
+*.log
+.DS_Store
+Thumbs.db

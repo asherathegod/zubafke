@@ -1,0 +1,516 @@
+/* Silkroad Web Macro Bot - Modern MMORPG Floating HUD Style */
+
+:host {
+  all: initial;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 13px;
+  color: #e2e8f0;
+  box-sizing: border-box;
+  user-select: none;
+  z-index: 2147483647;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+/* Floating HUD Main Container */
+.sro-hud-panel {
+  position: fixed;
+  top: 80px;
+  right: 25px;
+  width: 460px;
+  background: rgba(13, 17, 26, 0.96);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid #d4af37;
+  border-radius: 10px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7), 0 0 15px rgba(212, 175, 55, 0.25);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  z-index: 2147483647;
+}
+
+.sro-hud-panel.hidden {
+  display: none !important;
+}
+
+/* Minimized Floating Badge */
+.sro-minimized-badge {
+  position: fixed;
+  top: 80px;
+  right: 25px;
+  background: rgba(13, 17, 26, 0.95);
+  border: 1px solid #d4af37;
+  border-radius: 25px;
+  padding: 8px 16px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6), 0 0 10px rgba(212, 175, 55, 0.4);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: grab;
+  z-index: 2147483647;
+}
+
+.sro-minimized-badge:active {
+  cursor: grabbing;
+}
+
+/* Header & Drag Handle */
+.sro-header {
+  background: linear-gradient(180deg, #2a2012 0%, #151821 100%);
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(212, 175, 55, 0.4);
+  cursor: grab;
+}
+
+.sro-header:active {
+  cursor: grabbing;
+}
+
+.sro-title-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sro-title {
+  font-weight: 700;
+  font-size: 14px;
+  color: #f1c40f;
+  letter-spacing: 0.5px;
+  text-shadow: 0 0 8px rgba(241, 196, 15, 0.5);
+}
+
+.sro-header-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Target & Telemetry Banner */
+.sro-telemetry-banner {
+  background: rgba(0, 0, 0, 0.4);
+  padding: 6px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.sro-target-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.sro-target-name {
+  font-weight: 600;
+  color: #f39c12;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.sro-hp-track {
+  width: 100%;
+  height: 6px;
+  background: #1e293b;
+  border-radius: 3px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.sro-hp-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #e74c3c 0%, #2ecc71 100%);
+  transition: width 0.15s ease-out;
+}
+
+/* Quick Control Bar */
+.sro-quick-bar {
+  padding: 8px 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(26, 32, 44, 0.6);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.sro-btn-group {
+  display: flex;
+  gap: 6px;
+}
+
+/* Status Badges */
+.sro-status-pill {
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.sro-status-idle { background: #4a5568; color: #cbd5e0; }
+.sro-status-searching { background: #2b6cb0; color: #bee3f8; box-shadow: 0 0 8px rgba(43, 108, 176, 0.5); }
+.sro-status-attacking { background: #c53030; color: #fed7d7; box-shadow: 0 0 8px rgba(197, 48, 48, 0.5); }
+.sro-status-looting { background: #d69e2e; color: #fefcbf; box-shadow: 0 0 8px rgba(214, 158, 46, 0.5); }
+.sro-status-paused { background: #744210; color: #fbd38d; }
+
+/* Tabs Navigation */
+.sro-tabs-nav {
+  display: flex;
+  background: #111622;
+  border-bottom: 1px solid rgba(212, 175, 55, 0.2);
+  overflow-x: auto;
+}
+
+.sro-tab-btn {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  padding: 8px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  text-align: center;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s ease;
+}
+
+.sro-tab-btn:hover {
+  color: #f1c40f;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.sro-tab-btn.active {
+  color: #f1c40f;
+  border-bottom: 2px solid #f1c40f;
+  background: rgba(212, 175, 55, 0.08);
+}
+
+/* Tab Body */
+.sro-tab-body {
+  padding: 12px 14px;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.sro-tab-pane {
+  display: none;
+}
+
+.sro-tab-pane.active {
+  display: block;
+}
+
+/* Quick Region Jump Toolbar */
+.sro-region-toolbar {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 6px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.sro-region-btn {
+  background: rgba(30, 41, 59, 0.8);
+  border: 1px solid rgba(212, 175, 55, 0.3);
+  color: #e2e8f0;
+  padding: 3px 8px;
+  font-size: 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s ease;
+}
+
+.sro-region-btn:hover {
+  background: rgba(212, 175, 55, 0.2);
+  border-color: #f1c40f;
+  color: #f1c40f;
+}
+
+.sro-preset-btn {
+  background: rgba(30, 41, 59, 0.9);
+  border: 1px solid rgba(212, 175, 55, 0.25);
+  color: #cbd5e1;
+  padding: 2px 7px;
+  font-size: 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.sro-preset-btn:hover {
+  background: rgba(212, 175, 55, 0.25);
+  border-color: #f1c40f;
+  color: #f1c40f;
+}
+
+/* Interactive Map Canvas Container */
+.sro-map-container {
+  position: relative;
+  width: 100%;
+  height: 210px;
+  background: #090d16;
+  border: 1px solid #d4af37;
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: inset 0 0 15px rgba(0, 0, 0, 0.8), 0 0 10px rgba(212, 175, 55, 0.2);
+  cursor: crosshair;
+}
+
+.sro-map-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.sro-map-controls {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  z-index: 10;
+}
+
+/* Form Controls & Inputs */
+.sro-field-group {
+  margin-bottom: 10px;
+}
+
+.sro-label {
+  display: block;
+  font-size: 11px;
+  color: #94a3b8;
+  margin-bottom: 3px;
+  font-weight: 500;
+}
+
+.sro-input {
+  width: 100%;
+  background: #1a202c;
+  border: 1px solid #334155;
+  border-radius: 4px;
+  color: #f8fafc;
+  padding: 5px 8px;
+  font-size: 12px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.sro-input:focus {
+  border-color: #f1c40f;
+}
+
+.sro-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.sro-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  color: #e2e8f0;
+}
+
+.sro-checkbox-label input[type="checkbox"] {
+  accent-color: #f1c40f;
+  cursor: pointer;
+  width: 14px;
+  height: 14px;
+}
+
+/* Skill & Buff Rows */
+.sro-skill-item {
+  background: rgba(30, 41, 59, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  transition: border-color 0.2s;
+}
+
+.sro-skill-item:hover {
+  border-color: rgba(212, 175, 55, 0.4);
+}
+
+.sro-skill-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.sro-skill-params {
+  display: flex;
+  gap: 8px;
+}
+
+.sro-param-box {
+  flex: 1;
+}
+
+.sro-param-box label {
+  display: block;
+  font-size: 10px;
+  color: #94a3b8;
+  margin-bottom: 2px;
+}
+
+.sro-param-box input {
+  width: 100%;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 3px;
+  color: #f8fafc;
+  padding: 3px 6px;
+  font-size: 11px;
+}
+
+.sro-key-badge {
+  background: #d97706;
+  color: #fff;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-weight: bold;
+  font-size: 11px;
+}
+
+/* Buttons */
+.sro-btn {
+  border: none;
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  transition: all 0.15s ease;
+}
+
+.sro-btn-primary {
+  background: linear-gradient(180deg, #d97706 0%, #b45309 100%);
+  color: #ffffff;
+  box-shadow: 0 2px 6px rgba(217, 119, 6, 0.4);
+}
+
+.sro-btn-primary:hover {
+  background: linear-gradient(180deg, #f59e0b 0%, #d97706 100%);
+}
+
+.sro-btn-secondary {
+  background: #334155;
+  color: #e2e8f0;
+}
+
+.sro-btn-secondary:hover {
+  background: #475569;
+}
+
+.sro-btn-danger {
+  background: linear-gradient(180deg, #dc2626 0%, #b91c1c 100%);
+  color: #ffffff;
+}
+
+.sro-icon-btn {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  padding: 3px 6px;
+  font-size: 12px;
+  border-radius: 3px;
+}
+
+.sro-icon-btn:hover {
+  color: #f1c40f;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* Stats Cards */
+.sro-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.sro-stat-card {
+  background: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  padding: 8px;
+  text-align: center;
+}
+
+.sro-stat-num {
+  font-size: 16px;
+  font-weight: 700;
+  color: #f1c40f;
+}
+
+.sro-stat-title {
+  font-size: 10px;
+  color: #94a3b8;
+  margin-top: 2px;
+}
+
+/* Console Log Box */
+.sro-console {
+  background: #090d16;
+  border: 1px solid #1e293b;
+  border-radius: 4px;
+  height: 120px;
+  overflow-y: auto;
+  padding: 6px 8px;
+  font-family: monospace;
+  font-size: 11px;
+}
+
+.sro-log-row {
+  margin-bottom: 3px;
+  line-height: 1.3;
+}
+
+.sro-log-time { color: #64748b; }
+.sro-log-tag { font-weight: bold; border-radius: 2px; padding: 0 3px; margin: 0 3px; font-size: 9px; }
+.tag-SYS { background: #3b82f6; color: #fff; }
+.tag-COMBAT { background: #ef4444; color: #fff; }
+.tag-SKILL { background: #8b5cf6; color: #fff; }
+.tag-BUFF { background: #06b6d4; color: #fff; }
+.tag-LOOT { background: #eab308; color: #000; }
+.tag-DROP { background: #eab308; color: #000; font-weight: bold; }
+.tag-SPOT { background: #10b981; color: #fff; }
+.tag-STAT { background: #22c55e; color: #fff; }
+.tag-NAV { background: #3b82f6; color: #fff; }
+.tag-WARN { background: #f97316; color: #fff; }
+
+/* Footer */
+.sro-footer {
+  background: #0b0f19;
+  padding: 6px 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 10px;
+  color: #64748b;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}

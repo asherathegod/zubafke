@@ -1,0 +1,72 @@
+{
+  "manifest_version": 3,
+  "name": "Silkroad Web Macro Bot Pro",
+  "version": "1.0.1",
+  "description": "Tarayıcı tabanlı Silkroad için gelişmiş otomatik skill rotasyonu, auto-target, buff, loot ve macro botu.",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://play.jadeway.online/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://play.jadeway.online/*"],
+      "js": [
+        "overlay/audio-synth.js",
+        "overlay/engine.js",
+        "overlay/hud.js",
+        "content.js"
+      ],
+      "run_at": "document_end"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "inpage.js",
+        "overlay/hud.css",
+        "overlay/world_map.png",
+        "overlay/minimap/*",
+        "icons/*"
+      ],
+      "matches": ["https://play.jadeway.online/*"]
+    }
+  ],
+  "commands": {
+    "toggle-bot": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+S",
+        "windows": "Ctrl+Shift+S",
+        "mac": "Command+Shift+S"
+      },
+      "description": "Botu Başlat / Durdur (Toggle Start/Stop)"
+    },
+    "toggle-hud": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+H",
+        "windows": "Ctrl+Shift+H",
+        "mac": "Command+Shift+H"
+      },
+      "description": "Oyun İçi HUD Arayüzünü Aç / Kapat"
+    }
+  }
+}
