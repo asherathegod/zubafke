@@ -169,13 +169,28 @@
       if (data.base) {
         gameState.player.str = data.base.str || gameState.player.str;
         gameState.player.int = data.base.int || gameState.player.int;
-        gameState.player.unspentStats = data.base.unspent ?? gameState.player.unspentStats;
+        gameState.player.unspentStats = typeof data.base.unspent === 'number' ? data.base.unspent : 0;
       }
       if (data.derived) {
         gameState.player.maxHp = data.derived.maxHp || gameState.player.maxHp;
         gameState.player.maxMp = data.derived.maxMp || gameState.player.maxMp;
       }
       notifyContentScript('STATS_UPDATED', { player: gameState.player });
+    }
+
+    // Level Up Event
+    if (type === 'progress.levelUp' && data) {
+      if (data.level !== undefined) gameState.player.level = data.level;
+      if (data.statPoints !== undefined) gameState.player.unspentStats = data.statPoints;
+      notifyContentScript('GAME_STATE_UPDATE', { player: gameState.player });
+    }
+
+    // Mastery Update Event (Live level & SP)
+    if (type === 'mastery.update' && data) {
+      if (!gameState.player.masteries) gameState.player.masteries = {};
+      if (data.masteryId) gameState.player.masteries[data.masteryId] = data.level;
+      if (data.sp !== undefined) gameState.player.sp = data.sp;
+      notifyContentScript('GAME_STATE_UPDATE', { player: gameState.player });
     }
 
     // Inventory Update

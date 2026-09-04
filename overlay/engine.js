@@ -294,17 +294,39 @@ class SroBotEngine {
 
   checkAndUpgradeMasteries() {
     if (!this.config.autoProgression?.autoMasteryEnabled) return;
-    const now = Date.now();
-    if (now - this.lastMasteryUpgradeTime < 6000) return; // Prevent spamming server
-    this.lastMasteryUpgradeTime = now;
+
+    const p = this.telemetry.player;
+    const playerLevel = p.level || 1;
+    const currentSp = p.sp ?? 999999;
+    
+    // If player has 0 SP, cannot upgrade any mastery
+    if (currentSp <= 0) return;
 
     const masteries = this.config.autoProgression.masteries || {};
     const selectedMasteries = Object.keys(masteries).filter(m => masteries[m]);
     if (selectedMasteries.length === 0) return;
 
+    const playerMasteries = p.masteries || {};
+
+    // Filter masteries that are ACTUALLY lower than the player's level
+    const upgradable = selectedMasteries.filter(mId => {
+      const currentMasteryLvl = playerMasteries[mId] || 0;
+      return currentMasteryLvl < playerLevel;
+    });
+
+    // IF THERE ARE NO MASTERIES TO UPGRADE, DO ABSOLUTELY NOTHING!
+    if (upgradable.length === 0) return;
+
+    const now = Date.now();
+    if (now - this.lastMasteryUpgradeTime < 10000) return; // Prevent spamming server
+    this.lastMasteryUpgradeTime = now;
+
     // Official game packet: mastery.raise { masteryId }
-    for (const mId of selectedMasteries) {
+    for (const mId of upgradable) {
+      const currentLvl = playerMasteries[mId] || 0;
       this.sendGamePacket({ t: 'mastery.raise', d: { masteryId: mId } });
+      this.log('MASTERY', `📜 Mastery Yükseltildi: [${mId.toUpperCase()}] (${currentLvl} -> ${currentLvl + 1}, Karakter: Lv.${playerLevel})`, 'info');
+      playerMasteries[mId] = currentLvl + 1;
     }
   }
 
