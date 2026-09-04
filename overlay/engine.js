@@ -522,10 +522,14 @@ class SroBotEngine {
 
           if (!this.running || this.paused) return;
 
-          // 3. Target the dead party member (Zustand store + DOM click)
+          // 3. Target the dead party member (Zustand store + DOM click + packet)
           if (deadMember.entityId) {
             this.targetDispatcher({ id: deadMember.entityId, name: deadMember.name });
-            await this.sleep(300);
+            this.sendGamePacket({
+              t: 'target.set',
+              d: { id: deadMember.entityId }
+            });
+            await this.sleep(350);
           }
 
           if (!this.running || this.paused) return;
@@ -542,12 +546,13 @@ class SroBotEngine {
           this.log('PARTY', `✝️ Res Skill basılıyor [${resPage !== 'current' ? resPage + '-' : ''}${resSlot}]...`, 'info');
           this.dispatchKey(resSlot, 60);
 
-          // Direct skill.cast packet fallback if res skill is in discovered list
+          // Direct skill.cast packet fallback (Cleric Reverse / Grad Reverse / Rebirth or Force Rebirth)
           const resSkill = (this.telemetry.skills?.discovered || []).find(s => {
             const gid = (s.groupId || s.id || "").toLowerCase();
-            return gid.includes('res') || gid.includes('revive') || gid.includes('reincarnat');
+            return gid.includes('rebirth') || gid.includes('reverse') || gid.includes('resurrect') || gid.includes('revive') || gid.includes('reincarnat');
           });
           if (resSkill && deadMember.entityId) {
+            this.log('PARTY', `✝️ Sunucuya Doğrudan Res Paketi Gönderiliyor: [${resSkill.name || resSkill.groupId}] -> [${deadMember.name}]`, 'info');
             this.sendGamePacket({
               t: 'skill.cast',
               d: { groupId: resSkill.groupId || resSkill.id, targetId: deadMember.entityId }
@@ -570,7 +575,7 @@ class SroBotEngine {
           if (needSwap) {
             this.log('SWAP', `⚔️ Ana silaha dönülüyor: [${mainWep.toUpperCase()}]`, 'info');
             this.weaponDispatcher({ weaponType: mainWep, equipShield: false });
-            await this.sleep(950);
+            await this.sleep(1300);
             this.dispatchKey('F1', 60);
             await this.sleep(150);
             this.telemetry.target.hasTarget = false;

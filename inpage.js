@@ -976,13 +976,35 @@
   }
 
   function unequipShield() {
-    sendPacket({ t: 'inv.unequip', d: { slot: 'shield' } });
-    sendPacket({ t: 'inv.unequip', d: { equipSlot: 'shield' } });
-    sendPacket({ t: 'inv.use', d: { equipSlot: 'shield' } });
-    sendPacket({ t: 'inv.use', d: { slot: 'shield' } });
+    // 1. Find the first empty slot in inventory bag
+    const bag = gameState.player.inventory?.bag || [];
+    let emptySlot = -1;
+    for (let i = 0; i < 160; i++) {
+      if (!bag[i] || !bag[i].itemId) {
+        emptySlot = i;
+        break;
+      }
+    }
+
+    if (emptySlot >= 0) {
+      console.log(`%c[Silkroad Bot Pro] 🛡️ Kalkan Çıkarılıyor: Equip Slot 1 -> Bag Slot ${emptySlot}`, "color:#e74c3c;font-weight:bold;");
+      // Opcode 48: inv.move { from: { c: 'equip', i: 1 }, to: { c: 'bag', i: emptySlot } }
+      sendPacket({
+        t: 'inv.move',
+        d: {
+          from: { c: 'equip', i: 1 },
+          to: { c: 'bag', i: emptySlot }
+        }
+      });
+    }
+
+    // 2. Also simulate contextmenu/click on equipped shield slot in DOM
     try {
-      const shieldSlotEl = document.querySelector('[data-slot="shield"], [data-equip="shield"], .slot-shield, [aria-label*="shield" i]');
-      if (shieldSlotEl) shieldSlotEl.click();
+      const shieldSlotEl = document.querySelector('.doll-slot.doll-shield, [class*="doll-shield"], [data-slot="shield"]');
+      if (shieldSlotEl) {
+        shieldSlotEl.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+        shieldSlotEl.click();
+      }
     } catch (e) {}
   }
 
@@ -993,12 +1015,19 @@
     const doEquip = (slot, itemId) => {
       console.log(`%c[Silkroad Bot Pro] ⚔️ Silah Takılıyor: Slot ${slot} (${itemId})`, "color:#f39c12;font-weight:bold;");
       sendPacket({ t: 'inv.use', d: { bagSlot: slot } });
+      sendPacket({
+        t: 'inv.move',
+        d: {
+          from: { c: 'bag', i: slot },
+          to: { c: 'equip', i: 0 }
+        }
+      });
     };
 
     if (is2Handed) {
-      // 1. Unequip shield first
+      // 1. Unequip shield first so 2-handed weapon can be equipped
       unequipShield();
-      // 2. Wait 250ms for server before equipping 2-handed weapon!
+      // 2. Wait 300ms for server before equipping 2-handed weapon!
       setTimeout(() => {
         const found = findWeaponInBag(type);
         if (found) {
@@ -1006,7 +1035,7 @@
         } else if (type === 'auto' || type === 'main') {
           findAndEquipMainFallback(false);
         }
-      }, 250);
+      }, 300);
       return true;
     }
 
@@ -1015,7 +1044,7 @@
     if (found) {
       doEquip(found.slot, found.item.itemId);
       if (wantEquipShield) {
-        setTimeout(() => equipShield(), 250);
+        setTimeout(() => equipShield(), 300);
       }
       return true;
     }
@@ -1041,12 +1070,26 @@
           setTimeout(() => {
             console.log(`%c[Silkroad Bot Pro] ⚔️ Ana Silaha Dönülüyor (2H): Slot ${slot} (${item.itemId})`, "color:#f39c12;font-weight:bold;");
             sendPacket({ t: 'inv.use', d: { bagSlot: slot } });
-          }, 250);
+            sendPacket({
+              t: 'inv.move',
+              d: {
+                from: { c: 'bag', i: slot },
+                to: { c: 'equip', i: 0 }
+              }
+            });
+          }, 300);
         } else {
           console.log(`%c[Silkroad Bot Pro] ⚔️ Ana Silaha Dönülüyor: Slot ${slot} (${item.itemId})`, "color:#f39c12;font-weight:bold;");
           sendPacket({ t: 'inv.use', d: { bagSlot: slot } });
+          sendPacket({
+            t: 'inv.move',
+            d: {
+              from: { c: 'bag', i: slot },
+              to: { c: 'equip', i: 0 }
+            }
+          });
           if (wantEquipShield) {
-            setTimeout(() => equipShield(), 250);
+            setTimeout(() => equipShield(), 300);
           }
         }
         return true;
@@ -1091,6 +1134,67 @@
       }
     }
     return null;
+  }
+
+    function selectPartyMemberDom(entityId, name) {
+    try {
+      const cards = document.querySelectorAll('button.party-card, [class*="party-card"], button[class*="party"]');
+      for (const card of cards) {
+        if (card.closest('#sro-bot-host')) continue;
+        let matched = false;
+
+        if (name && card.innerText && card.innerText.toLowerCase().includes(name.toLowerCase())) {
+          matched = true;
+        }
+
+        const fiberKey = Object.keys(card).find(k => k.startsWith('__reactFiber$') || k.startsWith('__reactInternalInstance$'));
+        if (fiberKey && card[fiberKey]) {
+          const fiber = card[fiberKey];
+          const m = fiber.memoizedProps?.m;
+          if (m && (m.entityId === entityId || (name && m.name && m.name.toLowerCase() === name.toLowerCase()))) {
+            matched = true;
+          }
+
+          if (matched) {
+            // Extract & cache QQ UI store if available!
+            let cur = fiber;
+            while (cur && !window.__SRO_TARGET_STORE__) {
+              if (cur.memoizedState) {
+                let h = cur.memoizedState;
+                while (h) {
+                  if (h.memoizedState && typeof h.memoizedState.setTarget === 'function') {
+                    window.__SRO_TARGET_STORE__ = h.memoizedState;
+                    break;
+                  }
+                  h = h.next;
+                }
+              }
+              cur = cur.return;
+            }
+
+            // Direct call to React button onClick prop (which calls: l && (V$(), QQ.getState().setTarget(e.entityId)))
+            if (typeof fiber.memoizedProps?.onClick === 'function') {
+              try {
+                fiber.memoizedProps.onClick({ preventDefault: () => {}, stopPropagation: () => {} });
+              } catch (err) {}
+            }
+          }
+        }
+
+        if (matched) {
+          card.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, view: window }));
+          card.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+          card.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, view: window }));
+          card.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+          card.click();
+          console.log(`%c[Silkroad Bot Pro] 🎯 Parti Üyesi Tıklandı: [${name || entityId}]`, "color:#10b981;font-weight:bold;");
+          return true;
+        }
+      }
+    } catch (e) {
+      console.warn('[Silkroad Bot Pro] selectPartyMemberDom error:', e);
+    }
+    return false;
   }
 
   function findZustandTargetStore() {
@@ -1182,6 +1286,14 @@
         gameState.target.lastSeen = Date.now();
         if (payload.hpPercent != null) gameState.target.hpPercent = payload.hpPercent;
         if (payload.name) gameState.target.name = payload.name;
+
+        // 1. Send dedicated server target.set packet (Opcode 18)
+        sendPacket({
+          t: 'target.set',
+          d: { id: payload.id }
+        });
+
+        // 2. Zustand store target set
         try {
           const store = findZustandTargetStore();
           if (store?.setTarget) {
@@ -1189,22 +1301,8 @@
           }
         } catch (e) {}
 
-        // If target has a name, click the party member UI frame in DOM to guarantee engine target lock
-        if (payload.name) {
-          try {
-            const allElements = document.querySelectorAll('div, span, li, button, p');
-            for (const el of allElements) {
-              if (el.closest('#sro-bot-host')) continue;
-              if (el.children.length === 0 && el.innerText && el.innerText.trim().toLowerCase() === payload.name.toLowerCase()) {
-                const clickable = el.closest('[class*="party"], [class*="member"], [class*="unit"], li, button') || el;
-                clickable.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
-                clickable.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
-                clickable.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-                break;
-              }
-            }
-          } catch (e) {}
-        }
+        // 3. Click the party member frame in DOM / invoke React onClick handler
+        selectPartyMemberDom(payload.id, payload.name);
       }
     } else if (type === 'CLEAR_TARGET') {
       sendPacket({ t: 'combat.stop', d: {} });

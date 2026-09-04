@@ -42,7 +42,7 @@ class SroHudController {
           <div class="sro-title-box">
             <span style="font-size:16px;">⚔️</span>
             <span class="sro-title">Silkroad Macro Bot Pro</span>
-            <span style="font-size:10px;background:#b45309;color:#fff;padding:1px 5px;border-radius:3px;font-weight:bold;">v3.6.7 Pro</span>
+            <span style="font-size:10px;background:#b45309;color:#fff;padding:1px 5px;border-radius:3px;font-weight:bold;">v3.6.8 Pro</span>
           </div>
           <div class="sro-header-controls">
             <button id="sro-minimize-btn" class="sro-icon-btn" title="Simge Durumuna Küçült">—</button>
@@ -365,7 +365,7 @@ class SroHudController {
               <div style="display:flex;justify-content:space-between;align-items:center;">
                 <div>
                   <strong style="color:#60a5fa;font-size:12px;">🚀 Bot Sürümü & Otomatik Güncelleme</strong>
-                  <div style="font-size:10px;color:#cbd5e1;margin-top:2px;">Mevcut Sürüm: <span style="color:#f1c40f;font-weight:bold;">v3.6.7 Pro</span></div>
+                  <div style="font-size:10px;color:#cbd5e1;margin-top:2px;">Mevcut Sürüm: <span style="color:#f1c40f;font-weight:bold;">v3.6.8 Pro</span></div>
                 </div>
                 <button id="btn-check-updates" class="sro-btn sro-btn-primary" style="font-size:10px;padding:4px 10px;">🔄 Güncellemeleri Denetle</button>
               </div>
