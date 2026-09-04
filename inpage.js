@@ -1179,6 +1179,23 @@
             store.setTarget(payload.id);
           }
         } catch (e) {}
+
+        // If target has a name, click the party member UI frame in DOM to guarantee engine target lock
+        if (payload.name) {
+          try {
+            const allElements = document.querySelectorAll('div, span, li, button, p');
+            for (const el of allElements) {
+              if (el.closest('#sro-bot-host')) continue;
+              if (el.children.length === 0 && el.innerText && el.innerText.trim().toLowerCase() === payload.name.toLowerCase()) {
+                const clickable = el.closest('[class*="party"], [class*="member"], [class*="unit"], li, button') || el;
+                clickable.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+                clickable.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+                clickable.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+                break;
+              }
+            }
+          } catch (e) {}
+        }
       }
     } else if (type === 'CLEAR_TARGET') {
       sendPacket({ t: 'combat.stop', d: {} });

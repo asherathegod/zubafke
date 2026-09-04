@@ -464,11 +464,11 @@ class SroBotEngine {
 
     if (deadMember) {
       const now = Date.now();
-      if (!this.lastResAttemptTime || (now - this.lastResAttemptTime > 8000)) {
+      if (!this.lastResAttemptTime || (now - this.lastResAttemptTime > 9000)) {
         this.lastResAttemptTime = now;
         const resPage = this.config.party.resPage || 'F2';
         const resSlot = this.config.party.resSlot || '8';
-        this.log('PARTY', `✝️ [${deadMember.name}] öldü! Canlandırma (Res) [${resPage !== 'current' ? resPage + '-' : ''}${resSlot}] uygulanıyor...`, 'warn');
+        this.log('PARTY', `✝️ [${deadMember.name}] öldü! Canlandırma (Res) başlatılıyor...`, 'warn');
         this.buffExecutionInProgress = true;
 
         const needSwap = this.config.buffs?.autoWeaponSwap;
@@ -476,6 +476,34 @@ class SroBotEngine {
         const mainWep = this.config.buffs?.mainWeapon || 'auto';
 
         try {
+          // 1. Move into Res range if too far away! (Cleric Res range is ~15m)
+          const p = this.telemetry.player;
+          if (p.x != null && p.z != null && deadMember.x != null && deadMember.z != null) {
+            const distToDead = Math.hypot(p.x - deadMember.x, p.z - deadMember.z);
+            if (distToDead > 10) {
+              this.setState('WALKING');
+              this.log('PARTY', `🏃 [${deadMember.name}] canlandırmak için yanına koşuluyor (${Math.round(distToDead)}m)...`, 'info');
+              const dx = p.x - deadMember.x;
+              const dz = p.z - deadMember.z;
+              const angle = Math.atan2(dz, dx);
+              const approachX = deadMember.x + Math.cos(angle) * 5;
+              const approachZ = deadMember.z + Math.sin(angle) * 5;
+              this.sendGamePacket({ t: 'move.click', d: { x: approachX, z: approachZ } });
+
+              const walkStart = Date.now();
+              while (this.running && !this.paused && (Date.now() - walkStart < 4000)) {
+                await this.sleep(300);
+                const curP = this.telemetry.player;
+                if (curP.x != null && curP.z != null && Math.hypot(curP.x - deadMember.x, curP.z - deadMember.z) <= 8) {
+                  break;
+                }
+              }
+            }
+          }
+
+          if (!this.running || this.paused) return;
+
+          // 2. Equip Cleric Rod if swap enabled
           if (needSwap) {
             this.log('SWAP', `⚔️ Res için Cleric Rod'a geçiliyor...`, 'info');
             this.weaponDispatcher({ weaponType: 'cleric', equipShield: this.config.buffs?.equipShield !== false });
@@ -484,13 +512,15 @@ class SroBotEngine {
 
           if (!this.running || this.paused) return;
 
+          // 3. Target the dead party member (Zustand store + DOM click)
           if (deadMember.entityId) {
-            this.targetDispatcher({ id: deadMember.entityId });
-            await this.sleep(250);
+            this.targetDispatcher({ id: deadMember.entityId, name: deadMember.name });
+            await this.sleep(300);
           }
 
           if (!this.running || this.paused) return;
 
+          // 4. Hotbar page switch to Res page (e.g. F2)
           if (needPageSwitch) {
             this.dispatchKey(resPage, 60);
             await this.sleep(220);
@@ -498,8 +528,26 @@ class SroBotEngine {
 
           if (!this.running || this.paused) return;
 
+          // 5. Press Res slot key
+          this.log('PARTY', `✝️ Res Skill basılıyor [${resPage !== 'current' ? resPage + '-' : ''}${resSlot}]...`, 'info');
           this.dispatchKey(resSlot, 60);
-          await this.sleep(1200);
+
+          // Direct skill.cast packet fallback if res skill is in discovered list
+          const resSkill = (this.telemetry.skills?.discovered || []).find(s => {
+            const gid = (s.groupId || s.id || "").toLowerCase();
+            return gid.includes('res') || gid.includes('revive') || gid.includes('reincarnat');
+          });
+          if (resSkill && deadMember.entityId) {
+            this.sendGamePacket({
+              t: 'skill.cast',
+              d: { groupId: resSkill.groupId || resSkill.id, targetId: deadMember.entityId }
+            });
+          }
+
+          // 6. Full cast channeling time: Cleric Resurrection cast takes 3.0s!
+          this.log('PARTY', `⏳ Canlandırma okunuyor (3.2sn kesintisiz bekleniyor)...`, 'info');
+          await this.sleep(3200);
+          this.log('PARTY', `✨ [${deadMember.name}] için Canlandırma tamamlandı!`, 'success');
 
         } catch (err) {
           console.error('[SRO Bot] Auto Res error:', err);
