@@ -94,7 +94,7 @@ class SroBotEngine {
         key: "Tab",
         searchDelayMs: 400,
         mobStallTimeoutSec: 35, // Strict Giant lock: up to 35s if damage is continuous
-        stuckTimeoutSec: 5 // Target abandoned if ZERO damage dealt in 5 seconds
+        stuckTimeoutSec: 18 // Target abandoned if ZERO damage dealt in 5 seconds
       },
       combat: {
         skillKeySequence: "1,2,3,4",
@@ -222,9 +222,9 @@ class SroBotEngine {
 
     this.log('WARN', `⚠️ Sunucu istek sınırı! Gecikmeler +${this.throttlePenaltyMs}ms artırıldı, ${(backoffMs/1000).toFixed(1)}s bekleniyor...`, 'warn');
     
-    // Always immediately release any stuck target to prevent freezing
-    if (this.telemetry.target.hasTarget || this.telemetry.target.id) {
-      this.abandonTarget("İstek Sınırı / Hız Cezası");
+    // Only abandon target if rate limits happen 3 times in a row
+    if (this.consecutiveRateLimits >= 3 && (this.telemetry.target.hasTarget || this.telemetry.target.id)) {
+      this.abandonTarget("Üst Üste İstek Sınırı");
     }
   }
 
@@ -432,6 +432,35 @@ class SroBotEngine {
           this.buffExecutionInProgress = false;
         }
       }
+    }
+  }
+
+  traceSpecificMember(memberName) {
+    if (!memberName) return;
+    const members = this.telemetry.party?.members || [];
+    const targetMember = members.find(m => m.name && m.name.toLowerCase() === memberName.trim().toLowerCase());
+    if (!targetMember || targetMember.dead) return;
+
+    const p = this.telemetry.player;
+    if (!p.x || !p.z || !targetMember.x || !targetMember.z) return;
+
+    const dx = p.x - targetMember.x;
+    const dz = p.z - targetMember.z;
+    const dist = Math.hypot(dx, dz);
+    const followDist = this.config.party.traceDistance || 7;
+
+    const now = Date.now();
+    if (dist > (followDist + 1.5) && (now - this.lastTraceMoveTime > 650)) {
+      this.lastTraceMoveTime = now;
+      const angle = Math.atan2(dz, dx);
+      const targetX = targetMember.x + Math.cos(angle) * (followDist * 0.7);
+      const targetZ = targetMember.z + Math.sin(angle) * (followDist * 0.7);
+
+      this.sendGamePacket({
+        t: 'move.click',
+        d: { x: targetX, z: targetZ }
+      });
+      this.log('TRACE', `🚶 [${targetMember.name}] takip ediliyor (${Math.round(dist)}m)`, 'info');
     }
   }
 
@@ -672,7 +701,9 @@ class SroBotEngine {
               this.log('TARGET', `🎯 Parti Üyesi [${memberName}] hedefine kilitlenildi (ID: ${targetMobId})`, 'success');
               await this.sleep(250);
             } else {
-              await this.sleep(300);
+              // No mob to attack right now: Follow the designated party member!
+              this.traceSpecificMember(memberName);
+              await this.sleep(350);
               continue;
             }
           } else {
@@ -756,9 +787,9 @@ class SroBotEngine {
       const now = Date.now();
 
       if (this.rateLimitBackoffUntil > now) {
-        await this.sleep(300);
-        this.abandonTarget("İstek Sınırı");
-        return false;
+        const waitTime = Math.min(1500, this.rateLimitBackoffUntil - now);
+        await this.sleep(waitTime);
+        continue;
       }
 
       // 1. Authoritative Death Check: HP is 0%
@@ -788,10 +819,18 @@ class SroBotEngine {
         }
       }
 
+      // If player is running to target or casting buffs, reset engagementStart so running across map doesn't trigger stuck!
+      const p = this.telemetry.player;
+      const isPlayerMoving = !!(p.targetX != null && p.targetZ != null);
+      if (isPlayerMoving || this.buffExecutionInProgress) {
+        engagementStart = now;
+        lastDamageDealtTime = now;
+      }
+
       // 3. ZERO DAMAGE STUCK MOB PROTECTION:
-      // If 5 seconds have passed and the mob has NEVER lost 1% HP, it is behind a mountain/wall/cliff or out of reach!
-      if (lastSeenHp >= initialHp && (now - engagementStart > zeroDamageStuckTimeoutMs)) {
-        this.log('COMBAT', `⚠️ [${mobName}] hedefine ${this.config.targeting.stuckTimeoutSec || 5}s boyunca hiç hasar verilemedi (Engel/Ulaşılamıyor). Hedef bırakılıyor.`, 'warn');
+      // Only trigger if character has arrived/stopped AND has dealt 0 damage for stuckTimeoutSec
+      if (!isPlayerMoving && !this.buffExecutionInProgress && lastSeenHp >= initialHp && (now - engagementStart > zeroDamageStuckTimeoutMs)) {
+        this.log('COMBAT', `⚠️ [${mobName}] hedefine ${this.config.targeting.stuckTimeoutSec || 18}s boyunca hiç hasar verilemedi (Engel/Ulaşılamıyor). Hedef bırakılıyor.`, 'warn');
         this.abandonTarget("Sıfır Hasar / Engel");
         return false;
       }

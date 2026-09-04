@@ -122,7 +122,7 @@ class SroHudController {
             <div class="sro-row sro-field-group">
               <div style="flex:1.2;">
                 <label class="sro-label">Sıfır Hasar Engel Bırakma (sn)</label>
-                <input id="cfg-stuck-timeout" type="number" class="sro-input" value="5" min="3" max="15">
+                <input id="cfg-stuck-timeout" type="number" class="sro-input" value="18" min="5" max="60">
               </div>
               <div style="flex:1;">
                 <label class="sro-label">Dev/Giant Kilit Süresi (sn)</label>
@@ -1155,7 +1155,7 @@ class SroHudController {
     if ($('cfg-target-key')) $('cfg-target-key').value = cfg.targeting?.key || 'Tab';
     if ($('cfg-target-search-delay')) $('cfg-target-search-delay').value = cfg.targeting?.searchDelayMs || 400;
     if ($('cfg-target-timeout')) $('cfg-target-timeout').value = cfg.targeting?.mobStallTimeoutSec || 35;
-    if ($('cfg-stuck-timeout')) $('cfg-stuck-timeout').value = cfg.targeting?.stuckTimeoutSec || 5;
+    if ($('cfg-stuck-timeout')) $('cfg-stuck-timeout').value = cfg.targeting?.stuckTimeoutSec || 18;
 
     // Range
     if ($('cfg-range-enable')) $('cfg-range-enable').checked = cfg.hunting?.rangeEnabled !== false;

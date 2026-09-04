@@ -614,17 +614,6 @@
         }
       }
 
-      // Check on-screen toasts for impossible actions or rate limits
-      const toasts = document.querySelectorAll('.toast, .notification, .k-window, [class*="toast"], [class*="prompt"]');
-      if (toasts.length > 0) {
-        for (const t of toasts) {
-          const toastTxt = (t.innerText || "").toLowerCase();
-          if (toastTxt.includes("that isn't possible right now") || toastTxt.includes("not possible")) {
-            notifyContentScript('ACTION_NOT_POSSIBLE', { reason: toastTxt });
-            break;
-          }
-        }
-      }
 
       // 4. Auto Res Accept DOM Fallback & Wait For Help Automation
       if (gameState.settings?.autoAcceptRes !== false) {

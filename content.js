@@ -114,7 +114,7 @@
 
       if (type === 'GAME_STATE_UPDATE') {
         engine.handleTelemetry(payload);
-      } else if (type === 'TOO_MANY_REQUESTS' || type === 'ACTION_NOT_POSSIBLE') {
+      } else if (type === 'TOO_MANY_REQUESTS') {
         engine.handleTooManyRequests(payload?.reason);
       } else if (type === 'REVIVE_ACCEPTED') {
         engine.log('PARTY', `✝️ Canlandırma teklifi otomatik kabul edildi! (Auto Res Accept)`, 'success');
