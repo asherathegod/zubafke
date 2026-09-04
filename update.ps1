@@ -4,7 +4,7 @@ Write-Host "[Silkroad Bot Pro] Guncellemeler denetleniyor..." -ForegroundColor C
 
 $targetDir = "$PSScriptRoot"
 if (!$targetDir) { $targetDir = "$HOME\Desktop\SilkroadBot" }
-$repoUrl = "https://github.com/REPLACE_WITH_USER/REPLACE_WITH_REPO"
+$repoUrl = "https://github.com/asherathegod/zubafke"
 $zipUrl = "$repoUrl/archive/refs/heads/main.zip"
 
 $hasGit = $false

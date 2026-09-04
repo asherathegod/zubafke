@@ -356,11 +356,14 @@ class SroHudController {
               </div>
 
               <div style="margin-top:8px;">
-                <label class="sro-label">Terminal / PowerShell Tek Satır Güncelleme Komutu (Tıkla ve Kopyala):</label>
-                <input id="cmd-update-box" type="text" class="sro-input" readonly value="cd $HOME/Desktop/blackbox/jadesrobot; git pull" style="cursor:pointer;background:#090d16;color:#38bdf8;font-family:monospace;font-size:11px;" title="Tıklayarak kopyalayabilirsiniz">
+                <label class="sro-label">⚡ Otomatik Güncelleme Komutu (Tıkla ve Kopyala):</label>
+                <input id="cmd-update-box" type="text" class="sro-input" readonly value="irm https://raw.githubusercontent.com/asherathegod/zubafke/main/update.ps1 | iex" style="cursor:pointer;background:#090d16;color:#38bdf8;font-family:monospace;font-size:11px;" title="Tıklayarak kopyalayabilirsiniz">
               </div>
-              <div id="update-status-msg" style="font-size:10px;color:#10b981;margin-top:4px;display:none;">
-                ✓ Güncelleme komutu panoya kopyalandı! Terminal veya CMD'ye yapıştırıp Enter'a basmanız yeterlidir.
+              <div style="margin-top:6px;">
+                <label class="sro-label">👥 Arkadaşların İçin Tek Satır Kurulum Komutu:</label>
+                <input id="cmd-install-box" type="text" class="sro-input" readonly value="irm https://raw.githubusercontent.com/asherathegod/zubafke/main/install.ps1 | iex" style="cursor:pointer;background:#090d16;color:#a855f7;font-family:monospace;font-size:11px;" title="Arkadaşına gönder, PowerShell'e yapıştırsın">
+              </div>
+              <div id="update-status-msg" style="font-size:11px;color:#10b981;margin-top:6px;padding:6px;background:rgba(0,0,0,0.3);border-radius:4px;display:none;">
               </div>
             </div>
 
@@ -857,17 +860,63 @@ class SroHudController {
       };
     });
 
-    // Update One-Liner Box (Click to Copy)
+    // Update Box & Install Box (Click to Copy)
     $('cmd-update-box').onclick = () => {
-      const text = $('cmd-update-box').value;
-      navigator.clipboard.writeText(text);
+      navigator.clipboard.writeText($('cmd-update-box').value);
       const msg = $('update-status-msg');
-      msg.style.display = 'block';
+      msg.innerHTML = "✓ Güncelleme komutu panoya kopyalandı! PowerShell'e yapıştırıp Enter'a basmanız yeterlidir.";
+      msg.style.color = "#10b981";
+      msg.style.display = "block";
       setTimeout(() => { msg.style.display = 'none'; }, 5000);
     };
 
-    $('btn-check-updates').onclick = () => {
-      alert("Silkroad Bot Pro v3.6.0 en son sürümdür!\n\nProjeyi terminalden güncellemek için kutudaki komutu kopyalayıp terminale yapıştırabilirsiniz.");
+    $('cmd-install-box').onclick = () => {
+      navigator.clipboard.writeText($('cmd-install-box').value);
+      const msg = $('update-status-msg');
+      msg.innerHTML = "✓ Arkadaş kurulum komutu kopyalandı! Arkadaşına gönder, PowerShell'e yapıştırsın.";
+      msg.style.color = "#c084fc";
+      msg.style.display = "block";
+      setTimeout(() => { msg.style.display = 'none'; }, 5000);
+    };
+
+    // Live In-Game GitHub Updater
+    $('btn-check-updates').onclick = async () => {
+      const btn = $('btn-check-updates');
+      const msg = $('update-status-msg');
+      btn.innerText = 'Denetleniyor... ⏳';
+      btn.disabled = true;
+
+      try {
+        const resp = await fetch('https://raw.githubusercontent.com/asherathegod/zubafke/main/manifest.json?t=' + Date.now());
+        if (resp.ok) {
+          const remoteManifest = await resp.json();
+          const remoteVer = remoteManifest.version || '1.0.1';
+          const localVer = (typeof chrome !== 'undefined' && chrome.runtime?.getManifest) ? chrome.runtime.getManifest()?.version : '1.0.1';
+
+          if (remoteVer !== localVer) {
+            msg.innerHTML = `⚡ <strong>Yeni Güncelleme Bulundu (v${remoteVer})!</strong><br>Aşağıdaki komutu kopyalayıp PowerShell'e yapıştırın veya <code>update.bat</code> dosyasına çift tıklayın.`;
+            msg.style.color = '#f59e0b';
+            msg.style.display = 'block';
+            this.engine.log('SYS', `⚡ Yeni bot sürümü mevcut: v${remoteVer}`, 'warn');
+          } else {
+            msg.innerHTML = `✓ <strong>Botunuz En Güncel Sürümde! (v${localVer})</strong><br>GitHub üzerindeki en son sürümdesiniz.`;
+            msg.style.color = '#10b981';
+            msg.style.display = 'block';
+            this.engine.log('SYS', `✓ Bot sürümü güncel (v${localVer}).`, 'success');
+          }
+        } else {
+          msg.innerHTML = `✓ GitHub reposu bağlandı. Güncellemek için kutudaki PowerShell komutunu çalıştırabilir veya <code>update.bat</code> dosyasına çift tıklayabilirsiniz.`;
+          msg.style.color = '#38bdf8';
+          msg.style.display = 'block';
+        }
+      } catch (err) {
+        msg.innerHTML = `ℹ️ GitHub bağlantısı kontrol edildi. Güncelleme için aşağıdaki PowerShell komutunu çalıştırabilir veya <code>update.bat</code> dosyasına tıklayabilirsiniz.`;
+        msg.style.color = '#38bdf8';
+        msg.style.display = 'block';
+      } finally {
+        btn.innerText = '🔄 Güncellemeleri Denetle';
+        btn.disabled = false;
+      }
     };
 
     // Profiles
