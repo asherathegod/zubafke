@@ -48,6 +48,10 @@
       members: []
     },
     uniques: [],
+    monsters: new Map(),
+    serverTime: 0,
+    serverTimeReceivedAt: 0,
+    lastTooManyRequestNotified: 0,
     systemLogs: [],
     capturedPackets: [],
     lastItemReceivedTime: 0,
@@ -226,6 +230,11 @@
           notifyContentScript('PARTY_UPDATED', { party: gameState.party });
         }
       }
+      if (gameState.monsters && gameState.monsters.has(data.id)) {
+        const m = gameState.monsters.get(data.id);
+        if (data.x !== undefined) m.x = data.x;
+        if (data.z !== undefined) m.z = data.z;
+      }
     } else if (type === 'entity.move') {
       if (!localPlayerId && data.id) {
         localPlayerId = data.id;
@@ -258,6 +267,12 @@
           notifyContentScript('PARTY_UPDATED', { party: gameState.party });
         }
       }
+      if (gameState.monsters && gameState.monsters.has(data.id)) {
+        const m = gameState.monsters.get(data.id);
+        if (data.tx !== undefined) m.x = data.tx;
+        if (data.tz !== undefined) m.z = data.tz;
+        else if (data.x !== undefined) m.x = data.x;
+      }
     }
 
     // Buffs Update directly from server
@@ -272,6 +287,18 @@
       if (data.buffs && (data.id === localPlayerId || !localPlayerId)) {
         gameState.player.buffs = data.buffs;
         notifyContentScript('BUFFS_UPDATED', { buffs: gameState.player.buffs });
+      }
+      if (Array.isArray(data.add)) {
+        for (const ent of data.add) {
+          if (ent && ent.kind === 'monster') {
+            gameState.monsters.set(ent.id, ent);
+          }
+        }
+      }
+      if (Array.isArray(data.rem)) {
+        for (const remId of data.rem) {
+          gameState.monsters.delete(remId);
+        }
       }
     }
 
@@ -333,7 +360,16 @@
           const isPartyMember = gameState.party.members.some(m => m.entityId === data.dst);
           if (data.dst && data.dst !== localPlayerId && !isPartyMember) {
             gameState.assistTargetId = data.dst;
-            notifyContentScript('PARTY_ASSIST_TARGET', { targetId: data.dst, memberName: assistMember.name });
+            const mInfo = gameState.monsters?.get(data.dst);
+            notifyContentScript('PARTY_ASSIST_TARGET', {
+              targetId: data.dst,
+              memberName: assistMember.name,
+              targetName: mInfo?.name || 'Canavar',
+              targetX: mInfo?.x,
+              targetZ: mInfo?.z,
+              hpCurrent: data.dstHp ?? mInfo?.hp,
+              hpMax: mInfo?.maxHp
+            });
           }
         }
       }
@@ -352,7 +388,16 @@
           const isPartyMember = gameState.party.members.some(m => m.entityId === data.targetId);
           if (data.targetId && data.targetId !== localPlayerId && !isPartyMember) {
             gameState.assistTargetId = data.targetId;
-            notifyContentScript('PARTY_ASSIST_TARGET', { targetId: data.targetId, memberName: assistMember.name });
+            const mInfo = gameState.monsters?.get(data.targetId);
+            notifyContentScript('PARTY_ASSIST_TARGET', {
+              targetId: data.targetId,
+              memberName: assistMember.name,
+              targetName: mInfo?.name || 'Canavar',
+              targetX: mInfo?.x,
+              targetZ: mInfo?.z,
+              hpCurrent: mInfo?.hp,
+              hpMax: mInfo?.maxHp
+            });
           }
         }
       }
@@ -366,7 +411,16 @@
           const isPartyMember = gameState.party.members.some(m => m.entityId === data.targetId);
           if (data.targetId && data.targetId !== localPlayerId && !isPartyMember) {
             gameState.assistTargetId = data.targetId;
-            notifyContentScript('PARTY_ASSIST_TARGET', { targetId: data.targetId, memberName: assistMember.name });
+            const mInfo = gameState.monsters?.get(data.targetId);
+            notifyContentScript('PARTY_ASSIST_TARGET', {
+              targetId: data.targetId,
+              memberName: assistMember.name,
+              targetName: mInfo?.name || 'Canavar',
+              targetX: mInfo?.x,
+              targetZ: mInfo?.z,
+              hpCurrent: mInfo?.hp,
+              hpMax: mInfo?.maxHp
+            });
           }
         }
       }
@@ -387,7 +441,9 @@
     // Unique Boss Timers
     if (type === 'unique.timers' && data.uniques) {
       gameState.uniques = data.uniques;
-      notifyContentScript('UNIQUES_UPDATED', { uniques: data.uniques, serverTime: data.serverTime });
+      gameState.serverTime = data.serverTime || Date.now();
+      gameState.serverTimeReceivedAt = Date.now();
+      notifyContentScript('UNIQUES_UPDATED', { uniques: data.uniques, serverTime: gameState.serverTime });
     }
   }
 
@@ -641,7 +697,11 @@
             }
 
             if (/too many requests|slow down/i.test(logText)) {
-              notifyContentScript('TOO_MANY_REQUESTS', { reason: logText });
+              const now = Date.now();
+              if (now - (gameState.lastTooManyRequestNotified || 0) > 1500) {
+                gameState.lastTooManyRequestNotified = now;
+                notifyContentScript('TOO_MANY_REQUESTS', { reason: logText });
+              }
             }
           }
         }

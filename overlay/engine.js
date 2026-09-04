@@ -222,18 +222,29 @@ class SroBotEngine {
   }
 
   handleTooManyRequests(reason) {
+    const now = Date.now();
+    // Decay old rate limit counter if more than 6 seconds passed since last one
+    if (this.lastRateLimitTime && (now - this.lastRateLimitTime > 6000)) {
+      this.consecutiveRateLimits = 0;
+      this.throttlePenaltyMs = Math.max(0, (this.throttlePenaltyMs || 0) - 40);
+    }
+
     this.consecutiveRateLimits = (this.consecutiveRateLimits || 0) + 1;
-    this.throttlePenaltyMs = Math.min(300, (this.throttlePenaltyMs || 0) + 70);
-    this.lastRateLimitTime = Date.now();
+    this.lastRateLimitTime = now;
 
-    const backoffMs = Math.min(4000, 1400 + this.consecutiveRateLimits * 500);
-    this.rateLimitBackoffUntil = Date.now() + backoffMs;
+    // Gentle penalty: only add 10ms per occurrence, capped at 120ms
+    this.throttlePenaltyMs = Math.min(120, (this.throttlePenaltyMs || 0) + 10);
 
-    this.log('WARN', `⚠️ Sunucu istek sınırı! Gecikmeler +${this.throttlePenaltyMs}ms artırıldı, ${(backoffMs/1000).toFixed(1)}s bekleniyor...`, 'warn');
+    // Minor breath delay (only 200-350ms, never freezing for multiple seconds!)
+    const backoffMs = Math.min(350, 180 + this.consecutiveRateLimits * 10);
+    this.rateLimitBackoffUntil = now + backoffMs;
+
+    this.log('WARN', `⚠️ İstek sınırı uyarısı (${this.consecutiveRateLimits}/20). Hız hafifçe dengeleniyor (+${this.throttlePenaltyMs}ms)`, 'warn');
     
-    // Only abandon target if rate limits happen 3 times in a row
-    if (this.consecutiveRateLimits >= 3 && (this.telemetry.target.hasTarget || this.telemetry.target.id)) {
-      this.abandonTarget("Üst Üste İstek Sınırı");
+    // As requested by user: ONLY abandon target if rate limits exceed 20 in a row! Never stop the bot.
+    if (this.consecutiveRateLimits >= 20 && (this.telemetry.target.hasTarget || this.telemetry.target.id)) {
+      this.abandonTarget("20+ Üst Üste İstek Sınırı");
+      this.consecutiveRateLimits = 0;
     }
   }
 
@@ -543,8 +554,12 @@ class SroBotEngine {
     }
   }
 
-  handlePartyAssistTarget(targetId, memberName) {
+  handlePartyAssistTarget(payload, legacyMemberName) {
     if (!this.config.party?.assistEnabled) return;
+    const targetId = (typeof payload === 'object' && payload !== null) ? payload.targetId : payload;
+    const memberName = (typeof payload === 'object' && payload !== null) ? payload.memberName : legacyMemberName;
+    if (!targetId) return;
+
     if (this.blacklistedTargets.has(targetId) && Date.now() < this.blacklistedTargets.get(targetId)) {
       return; // Skip blacklisted/stuck target
     }
@@ -556,6 +571,11 @@ class SroBotEngine {
     this.telemetry.assistTarget = {
       targetId: targetId,
       memberName: memberName,
+      targetName: (typeof payload === 'object' && payload?.targetName) ? payload.targetName : `[Assist] ${memberName}`,
+      targetX: (typeof payload === 'object') ? payload.targetX : null,
+      targetZ: (typeof payload === 'object') ? payload.targetZ : null,
+      hpCurrent: (typeof payload === 'object') ? payload.hpCurrent : null,
+      hpMax: (typeof payload === 'object') ? payload.hpMax : null,
       time: Date.now()
     };
   }
@@ -635,6 +655,14 @@ class SroBotEngine {
 
     this.log('SYS', '🚀 Silkroad Macro Bot Başlatıldı!', 'success');
     this.setState('SEARCHING');
+
+    // Sync assist config immediately on start
+    if (this.config.party?.assistMemberName) {
+      this.assistConfigDispatcher({
+        assistMemberName: this.config.party.assistMemberName,
+        autoAcceptRes: this.config.party.autoAcceptRes !== false
+      });
+    }
 
     this.startBuffTicker();
     this.startApmTicker();
@@ -727,13 +755,14 @@ class SroBotEngine {
             const memberName = this.config.party.assistMemberName;
             this.setState('SEARCHING');
 
-            if (this.telemetry.assistTarget?.targetId && (Date.now() - this.telemetry.assistTarget.time < 10000)) {
-              const targetMobId = this.telemetry.assistTarget.targetId;
+            const assist = this.telemetry.assistTarget;
+            if (assist?.targetId && (Date.now() - assist.time < 12000)) {
+              const targetMobId = assist.targetId;
 
               // Check blacklist
               if (this.blacklistedTargets.has(targetMobId)) {
                 this.telemetry.assistTarget = null;
-                await this.sleep(300);
+                await this.sleep(200);
                 continue;
               }
 
@@ -741,19 +770,59 @@ class SroBotEngine {
               const isPartyMember = this.telemetry.party?.members?.some(m => m.entityId === targetMobId);
               if (isPartyMember || targetMobId === this.telemetry.player?.id) {
                 this.telemetry.assistTarget = null;
-                await this.sleep(250);
+                await this.sleep(200);
                 continue;
               }
 
+              // 1. Move into combat range if too far away!
+              const members = this.telemetry.party?.members || [];
+              const targetMember = members.find(m => m.name && m.name.toLowerCase() === memberName.trim().toLowerCase());
+              const p = this.telemetry.player;
+
+              let fightX = assist.targetX ?? targetMember?.x;
+              let fightZ = assist.targetZ ?? targetMember?.z;
+
+              if (p.x != null && p.z != null && fightX != null && fightZ != null) {
+                const distToFight = Math.hypot(p.x - fightX, p.z - fightZ);
+                // If more than 13m away, move closer to combat area
+                if (distToFight > 13) {
+                  this.setState('WALKING');
+                  this.log('ASSIST', `🏃 Savaşa yaklaşılıyor (${Math.round(distToFight)}m) -> [${assist.targetName || 'Mob'}]`, 'info');
+                  const dx = p.x - fightX;
+                  const dz = p.z - fightZ;
+                  const angle = Math.atan2(dz, dx);
+                  const approachX = fightX + Math.cos(angle) * 7;
+                  const approachZ = fightZ + Math.sin(angle) * 7;
+                  this.sendGamePacket({ t: 'move.click', d: { x: approachX, z: approachZ } });
+
+                  const walkStart = Date.now();
+                  while (this.running && !this.paused && (Date.now() - walkStart < 3500)) {
+                    await this.sleep(300);
+                    const curP = this.telemetry.player;
+                    if (curP.x != null && curP.z != null && Math.hypot(curP.x - fightX, curP.z - fightZ) <= 11) {
+                      break;
+                    }
+                  }
+                }
+              }
+
+              // 2. Lock on target: Send target dispatcher, combat.attack and Tab
               this.telemetry.target.id = targetMobId;
               this.telemetry.target.hasTarget = true;
               this.telemetry.target.isDead = false;
-              this.telemetry.target.name = `[Assist] ${this.telemetry.assistTarget.memberName || memberName}`;
-              this.telemetry.target.hpPercent = 100;
+              this.telemetry.target.name = assist.targetName || `[Assist] ${memberName}`;
+              this.telemetry.target.hpPercent = (assist.hpCurrent && assist.hpMax) ? Math.round((assist.hpCurrent / assist.hpMax) * 100) : 100;
+              this.telemetry.target.hpMax = assist.hpMax || 0;
+              this.telemetry.target.hpCurrent = assist.hpCurrent || 0;
 
-              // Target assist mob cleanly without forcing melee walk-up
               this.targetDispatcher({ id: targetMobId });
-              this.log('TARGET', `🎯 Parti Üyesi [${memberName}] hedefine kilitlenildi (ID: ${targetMobId})`, 'success');
+              this.sendGamePacket({
+                t: 'combat.attack',
+                d: { id: targetMobId }
+              });
+              this.dispatchKey('Tab', 50);
+
+              this.log('TARGET', `🎯 Parti Üyesi [${memberName}] hedefine kilitlenildi: [${this.telemetry.target.name}]`, 'success');
               await this.sleep(150);
             } else {
               // No mob to attack right now: Follow the designated party member!
@@ -818,6 +887,9 @@ class SroBotEngine {
    * Attack Sequence with Anti-Stuck & Strict Giant Lock
    */
   async executeSkillKeySequence() {
+    // Ensure combat bar (F1) is active
+    this.dispatchKey('F1', 40);
+
     const rawKeys = this.config.combat.skillKeySequence || "1,2,3,4";
     const keys = rawKeys.split(',').map(k => k.trim()).filter(Boolean);
     if (keys.length === 0) keys.push("1");

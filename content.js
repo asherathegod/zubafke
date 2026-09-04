@@ -134,7 +134,7 @@
         engine.log('BUFF', `⚡ Hızlı Koşma Scrollu Basıldı: [${payload.item?.name || payload.item?.itemId || 'Speed Scroll'}] (Slot: ${payload.slot})`, 'success');
       } else if (type === 'PARTY_ASSIST_TARGET') {
         if (payload?.targetId) {
-          engine.handlePartyAssistTarget(payload.targetId, payload.memberName);
+          engine.handlePartyAssistTarget(payload);
         }
       } else if (type === 'PACKET_CAPTURED') {
         if (payload?.packet) {
@@ -161,6 +161,11 @@
         if (payload?.known) engine.telemetry.skills.known = payload.known;
       } else if (type === 'UNIQUES_UPDATED') {
         if (payload?.uniques) engine.telemetry.uniques = payload.uniques;
+        if (payload?.serverTime) {
+          engine.telemetry.serverTime = payload.serverTime;
+          engine.telemetry.serverTimeReceivedAt = Date.now();
+        }
+        hud.renderUniquesList();
       } else if (type === 'PARTY_UPDATED') {
         if (payload?.party) {
           engine.handlePartyUpdate(payload.party);

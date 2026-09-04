@@ -19,7 +19,7 @@ class SroHudController {
     this.loadSavedSettings();
 
     setInterval(() => this.updatePartyUI(), 1000);
-    setInterval(() => this.renderUniquesList(), 3000);
+    setInterval(() => this.renderUniquesList(), 1000);
     setInterval(() => this.updateLiveRangeUI(), 1000);
   }
 
@@ -42,7 +42,7 @@ class SroHudController {
           <div class="sro-title-box">
             <span style="font-size:16px;">⚔️</span>
             <span class="sro-title">Silkroad Macro Bot Pro</span>
-            <span style="font-size:10px;background:#b45309;color:#fff;padding:1px 5px;border-radius:3px;font-weight:bold;">v3.6 Pro</span>
+            <span style="font-size:10px;background:#b45309;color:#fff;padding:1px 5px;border-radius:3px;font-weight:bold;">v3.6.4 Pro</span>
           </div>
           <div class="sro-header-controls">
             <button id="sro-minimize-btn" class="sro-icon-btn" title="Simge Durumuna Küçült">—</button>
@@ -361,7 +361,7 @@ class SroHudController {
               <div style="display:flex;justify-content:space-between;align-items:center;">
                 <div>
                   <strong style="color:#60a5fa;font-size:12px;">🚀 Bot Sürümü & Otomatik Güncelleme</strong>
-                  <div style="font-size:10px;color:#cbd5e1;margin-top:2px;">Mevcut Sürüm: <span style="color:#f1c40f;font-weight:bold;">v3.6.3 Pro</span></div>
+                  <div style="font-size:10px;color:#cbd5e1;margin-top:2px;">Mevcut Sürüm: <span style="color:#f1c40f;font-weight:bold;">v3.6.4 Pro</span></div>
                 </div>
                 <button id="btn-check-updates" class="sro-btn sro-btn-primary" style="font-size:10px;padding:4px 10px;">🔄 Güncellemeleri Denetle</button>
               </div>
@@ -1124,14 +1124,22 @@ class SroHudController {
     const selectTrace = this.shadowRoot.getElementById('cfg-trace-target-select');
     const selectAssist = this.shadowRoot.getElementById('cfg-party-assist-target');
 
-    const curTraceVal = selectTrace ? selectTrace.value : '';
-    const curAssistVal = selectAssist ? selectAssist.value : '';
+    const curTraceVal = (selectTrace && selectTrace.value) ? selectTrace.value : (this.engine.config.party?.traceTargetName || '');
+    const curAssistVal = (selectAssist && selectAssist.value) ? selectAssist.value : (this.engine.config.party?.assistMemberName || '');
 
     if (selectTrace) {
-      selectTrace.innerHTML = '<option value="">(Parti üyesi seçin)</option>' + members.map(m => `<option value="${m.name}" ${m.name === curTraceVal ? 'selected' : ''}>${m.name} (Lv.${m.level || '?'})</option>`).join('');
+      selectTrace.innerHTML = '<option value="">(Parti üyesi seçin)</option>' + members.map(m => `<option value="${m.name}" ${m.name.toLowerCase() === curTraceVal.toLowerCase() ? 'selected' : ''}>${m.name} (Lv.${m.level || '?'})</option>`).join('');
     }
     if (selectAssist) {
-      selectAssist.innerHTML = '<option value="">(Hedefi takip edilecek üye)</option>' + members.map(m => `<option value="${m.name}" ${m.name === curAssistVal ? 'selected' : ''}>${m.name} (Lv.${m.level || '?'})</option>`).join('');
+      selectAssist.innerHTML = '<option value="">(Hedefi takip edilecek üye)</option>' + members.map(m => `<option value="${m.name}" ${m.name.toLowerCase() === curAssistVal.toLowerCase() ? 'selected' : ''}>${m.name} (Lv.${m.level || '?'})</option>`).join('');
+    }
+
+    // Ensure inpage.js has the latest assist config
+    if (this.engine.config.party?.assistMemberName) {
+      this.engine.assistConfigDispatcher({
+        assistMemberName: this.engine.config.party.assistMemberName,
+        autoAcceptRes: this.engine.config.party.autoAcceptRes !== false
+      });
     }
 
     const listEl = this.shadowRoot.getElementById('sro-party-members-list');
@@ -1161,16 +1169,62 @@ class SroHudController {
     if (!container) return;
 
     if (uniques.length === 0) {
-      container.innerHTML = `<div style="color:#64748b;text-align:center;">Boss zamanları taranıyor...</div>`;
+      container.innerHTML = `<div style="color:#64748b;text-align:center;padding:8px 0;">Boss zamanları taranıyor (unique.timers)...</div>`;
       return;
     }
 
-    container.innerHTML = uniques.map(u => `
-      <div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid rgba(255,255,255,0.04);">
-        <span style="color:#f87171;font-weight:600;">${u.name || u.id}</span>
-        <span style="color:#f1c40f;">${u.status || 'Bilinmiyor'}</span>
-      </div>
-    `).join('');
+    const BOSS_MAP = {
+      'mob_tigerwoman': { name: 'Tiger Girl', zone: 'Jangan', icon: '🐯' },
+      'mob_uruchi': { name: 'Uruchi', zone: 'Donwhang', icon: '🏹' },
+      'mob_isyutaru': { name: 'Isyutaru', zone: 'Hotan', icon: '❄️' },
+      'mob_bonelord': { name: 'Lord Yarkan', zone: 'Karakoram', icon: '💀' },
+      'mob_kerberos': { name: 'Cerberus', zone: 'Constantinople', icon: '🐺' },
+      'mob_ivy': { name: 'Captain Ivy', zone: 'Samarkand', icon: '🏹' },
+      'mob_demonshaitan': { name: 'Demon Shaitan', zone: 'Roc Mountain', icon: '👿' }
+    };
+
+    const sTime = this.engine.telemetry.serverTime;
+    const rAt = this.engine.telemetry.serverTimeReceivedAt;
+    const currentServerTime = (sTime && rAt) ? (sTime + (Date.now() - rAt)) : Date.now();
+
+    container.innerHTML = uniques.map(u => {
+      const mId = u.monsterId || u.id || '';
+      const bInfo = BOSS_MAP[mId] || {
+        name: mId.replace(/^mob_/, '').replace(/_/g, ' ').toUpperCase() || 'Bilinmeyen Unique',
+        zone: (u.zoneId || '').replace(/_province$/, '').toUpperCase(),
+        icon: '👑'
+      };
+
+      let statusHtml = '';
+      if (u.live) {
+        statusHtml = `<span style="color:#22c55e;font-weight:bold;background:rgba(34,197,94,0.15);padding:1px 6px;border-radius:4px;border:1px solid rgba(34,197,94,0.3);font-size:10px;">🔴 CANLI / ÇIKTI!</span>`;
+      } else if (u.spawnAtMs) {
+        const diffMs = Math.max(0, u.spawnAtMs - currentServerTime);
+        const totalSec = Math.floor(diffMs / 1000);
+        const hrs = Math.floor(totalSec / 3600);
+        const mins = Math.floor((totalSec % 3600) / 60);
+        const secs = totalSec % 60;
+        let timeStr = '';
+        if (hrs > 0) timeStr = `${hrs}s ${mins}dk ${secs}sn`;
+        else if (mins > 0) timeStr = `${mins}dk ${secs}sn`;
+        else timeStr = `${secs}sn`;
+
+        statusHtml = `<span style="color:#f59e0b;font-family:monospace;font-weight:600;font-size:11px;">⏱️ ${timeStr}</span>`;
+      } else {
+        statusHtml = `<span style="color:#94a3b8;font-size:10px;">${u.status || 'Bekleniyor'}</span>`;
+      }
+
+      return `
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:3px 4px;border-bottom:1px solid rgba(255,255,255,0.05);">
+          <div>
+            <span style="font-size:12px;">${bInfo.icon}</span>
+            <span style="color:#f8fafc;font-weight:600;font-size:11px;margin-left:3px;">${bInfo.name}</span>
+            <span style="color:#64748b;font-size:9px;margin-left:4px;">(${bInfo.zone})</span>
+          </div>
+          <div>${statusHtml}</div>
+        </div>
+      `;
+    }).join('');
   }
 
   saveSettings() {
@@ -1191,6 +1245,12 @@ class SroHudController {
         Object.assign(this.engine.config, saved);
         this.applyConfigToForm();
         this.renderDynamicBuffList();
+        if (this.engine.config.party?.assistMemberName) {
+          this.engine.assistConfigDispatcher({
+            assistMemberName: this.engine.config.party.assistMemberName,
+            autoAcceptRes: this.engine.config.party.autoAcceptRes !== false
+          });
+        }
       }
     } catch (e) {}
 
