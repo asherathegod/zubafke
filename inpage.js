@@ -19,7 +19,7 @@
     player: {
       id: null,
       name: "Ashera",
-      level: 22,
+      level: null,
       hp: 621, maxHp: 621, hpPercent: 100,
       mp: 1576, maxMp: 1576, mpPercent: 100,
       str: 41, int: 104, unspentStats: 0,
@@ -336,6 +336,31 @@
         });
       }
       gameState.party = data;
+
+      // Extract local player level and masteries from party members
+      if (Array.isArray(data.members)) {
+        const myMember = data.members.find(m =>
+          (localPlayerId && m.entityId === localPlayerId) ||
+          (gameState.player.name && m.name && m.name.toLowerCase() === gameState.player.name.toLowerCase()) ||
+          m.isLeader || m.leader
+        );
+        if (myMember) {
+          if (myMember.level) gameState.player.level = myMember.level;
+          if (myMember.name) gameState.player.name = myMember.name;
+          if (myMember.entityId) {
+            gameState.player.id = myMember.entityId;
+            localPlayerId = myMember.entityId;
+          }
+          if (Array.isArray(myMember.topMasteries)) {
+            if (!gameState.player.masteries) gameState.player.masteries = {};
+            myMember.topMasteries.forEach(tm => {
+              if (tm && tm.masteryId) gameState.player.masteries[tm.masteryId] = tm.level;
+            });
+          }
+          notifyContentScript('GAME_STATE_UPDATE', { player: gameState.player });
+        }
+      }
+
       notifyContentScript('PARTY_UPDATED', { party: data });
     }
 
@@ -357,7 +382,7 @@
 
     // Combat Death - Immediate authoritative kill detection
     if (type === 'combat.death' && data) {
-      if (gameState.target.id === data.id || !gameState.target.id) {
+      if (gameState.target.id && gameState.target.id === data.id) {
         gameState.target.isDead = true;
         gameState.target.hpPercent = 0;
         gameState.target.hpCurrent = 0;
@@ -365,6 +390,7 @@
       }
       if (gameState.assistTargetId === data.id) {
         gameState.assistTargetId = null;
+        notifyContentScript('PARTY_ASSIST_DIED', { id: data.id });
       }
     }
 
@@ -770,6 +796,34 @@
           gameState.target.id = null;
           gameState.target.name = '';
         }
+      }
+
+      // 2b. Player Level Scraper from DOM
+      const playerFrames = document.querySelectorAll(
+        '[class*="player"], [id*="player"], [class*="hero"], [id*="hero"], [class*="character-info"]'
+      );
+      for (const pf of playerFrames) {
+        if (pf.closest('#sro-bot-host') || pf.closest('.sro-hud-panel')) continue;
+        if (pf.offsetParent !== null && pf.innerText) {
+          const lvlM = pf.innerText.match(/(?:Lv\.?|Level)\s*(\d+)/i);
+          if (lvlM && lvlM[1]) {
+            const pLvl = parseInt(lvlM[1], 10);
+            if (pLvl > 0 && pLvl <= 150) {
+              if (gameState.player.level !== pLvl) {
+                gameState.player.level = pLvl;
+                notifyContentScript('GAME_STATE_UPDATE', { player: gameState.player });
+              }
+              break;
+            }
+          }
+        }
+      }
+
+      // 2c. Target ID synchronization from Zustand store
+      const store = findZustandTargetStore();
+      const currentStoreTargetId = store?.getState ? store.getState()?.targetId : (store?.targetId || window.QQ?.getState?.()?.targetId || window.QQ?.targetId);
+      if (currentStoreTargetId && gameState.target.hasTarget && !gameState.target.id) {
+        gameState.target.id = currentStoreTargetId;
       }
 
       // 3. System Log & Toast Monitor
@@ -1771,6 +1825,8 @@
         if (payload.isPartyMember) {
           selectPartyMemberDom(payload.id, payload.name);
         }
+
+        notifyContentScript('GAME_STATE_UPDATE', { target: gameState.target });
 
         // NO opcode 18 (target.set)! The official client NEVER sends target.set!
         // When hotbar skill keys (1, 2, 3...) are pressed, the client's t1() function

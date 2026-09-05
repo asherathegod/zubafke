@@ -283,23 +283,24 @@ class SroBotEngine {
       return false;
     }
 
-    // 1. Exact entity ID match if available
-    if (assist.targetId && telemetryTarget.id && Number(telemetryTarget.id) === Number(assist.targetId)) {
-      return true;
+    // 1. Exact entity ID match if both IDs are known
+    if (assist.targetId && telemetryTarget.id) {
+      return Number(telemetryTarget.id) === Number(assist.targetId);
     }
 
-    // 2. Name match (case-insensitive substring, e.g. "Niya Soldier")
-    const tName = (telemetryTarget.name || '').trim().toLowerCase();
-    const aName = (assist.targetName || '').trim().toLowerCase();
-    if (tName && aName && aName !== 'canavar' && aName !== 'mob') {
-      if (tName.includes(aName) || aName.includes(tName)) {
+    // 2. If telemetryTarget has no ID (scraped from DOM text only):
+    // Name match (case-insensitive substring, e.g. "Niya Soldier")
+    if (!telemetryTarget.id) {
+      const tName = (telemetryTarget.name || '').trim().toLowerCase();
+      const aName = (assist.targetName || '').trim().toLowerCase();
+      if (tName && aName && aName !== 'canavar' && aName !== 'mob') {
+        if (tName.includes(aName) || aName.includes(tName)) {
+          return true;
+        }
+      }
+      if ((!aName || aName === 'canavar' || aName === 'mob') && tName && !tName.includes('player')) {
         return true;
       }
-    }
-
-    // 3. Fallback: If assist has generic name, but target is an enemy mob
-    if ((!aName || aName === 'canavar' || aName === 'mob') && tName && !tName.includes('player')) {
-      return true;
     }
 
     return false;
@@ -366,22 +367,26 @@ class SroBotEngine {
     if (!this.config.autoProgression?.autoMasteryEnabled) return;
 
     const p = this.telemetry.player;
-    const playerLevel = p.level || 1;
+    const playerLevel = p.level;
+    // If player level is not known yet or <= 1, do not upgrade blindly
+    if (!playerLevel || playerLevel <= 1) return;
+
     const currentSp = p.sp ?? 999999;
-    
-    // If player has 0 SP, cannot upgrade any mastery
     if (currentSp <= 0) return;
 
     const masteries = this.config.autoProgression.masteries || {};
     const selectedMasteries = Object.keys(masteries).filter(m => masteries[m]);
     if (selectedMasteries.length === 0) return;
 
-    const playerMasteries = p.masteries || {};
+    const playerMasteries = p.masteries;
+    // CRITICAL: If we don't have the player's actual mastery data yet, DO NOT assume 0!
+    // That causes "Your level is too low for that" spam when masteries are already learned/capped!
+    if (!playerMasteries || Object.keys(playerMasteries).length === 0) return;
 
     // Filter masteries that are ACTUALLY lower than the player's level
     const upgradable = selectedMasteries.filter(mId => {
-      const currentMasteryLvl = playerMasteries[mId] || 0;
-      return currentMasteryLvl < playerLevel;
+      const currentMasteryLvl = playerMasteries[mId];
+      return currentMasteryLvl !== undefined && currentMasteryLvl < playerLevel;
     });
 
     // IF THERE ARE NO MASTERIES TO UPGRADE, DO ABSOLUTELY NOTHING!
@@ -391,13 +396,12 @@ class SroBotEngine {
     if (now - this.lastMasteryUpgradeTime < 10000) return; // Prevent spamming server
     this.lastMasteryUpgradeTime = now;
 
-    // Official game packet: mastery.raise { masteryId }
-    for (const mId of upgradable) {
-      const currentLvl = playerMasteries[mId] || 0;
-      this.sendGamePacket({ t: 'mastery.raise', d: { masteryId: mId } });
-      this.log('MASTERY', `📜 Mastery Yükseltildi: [${mId.toUpperCase()}] (${currentLvl} -> ${currentLvl + 1}, Karakter: Lv.${playerLevel})`, 'info');
-      playerMasteries[mId] = currentLvl + 1;
-    }
+    // Upgrade one mastery per check interval to be safe
+    const mId = upgradable[0];
+    const currentLvl = playerMasteries[mId] || 0;
+    this.sendGamePacket({ t: 'mastery.raise', d: { masteryId: mId } });
+    this.log('MASTERY', `📜 Mastery Yükseltildi: [${mId.toUpperCase()}] (${currentLvl} -> ${currentLvl + 1}, Karakter: Lv.${playerLevel})`, 'info');
+    playerMasteries[mId] = currentLvl + 1;
   }
 
   /* =========================================================================
@@ -641,53 +645,15 @@ class SroBotEngine {
     if (!targetMember || targetMember.dead) return;
 
     const p = this.telemetry.player;
-    if (!p.x || !p.z || !targetMember.x || !targetMember.z) return;
+    if (p.x == null || p.z == null || targetMember.x == null || targetMember.z == null) return;
 
     const dx = p.x - targetMember.x;
     const dz = p.z - targetMember.z;
     const dist = Math.hypot(dx, dz);
-    const followDist = this.config.party.traceDistance || 7;
+    const followDist = Math.max(3, this.config.party.traceDistance || 5);
 
     const now = Date.now();
-    if (dist > (followDist + 1.5) && (now - this.lastTraceMoveTime > 650)) {
-      this.lastTraceMoveTime = now;
-      const angle = Math.atan2(dz, dx);
-      const targetX = targetMember.x + Math.cos(angle) * (followDist * 0.7);
-      const targetZ = targetMember.z + Math.sin(angle) * (followDist * 0.7);
-
-      this.sendGamePacket({
-        t: 'move.click',
-        d: { x: targetX, z: targetZ }
-      });
-      this.log('TRACE', `🚶 [${targetMember.name}] takip ediliyor (${Math.round(dist)}m)`, 'info');
-    }
-  }
-
-  checkAndExecuteAutoTrace() {
-    if (!this.running || this.paused) return;
-    if (!this.config.party?.autoTraceEnabled) return;
-    // NEVER move during active combat! Movement instantly cancels active skill animations!
-    if (this.state === 'ATTACKING') {
-      return;
-    }
-    const targetName = (this.config.party.traceTargetName || "").trim().toLowerCase();
-    if (!targetName) return;
-
-    const members = this.telemetry.party?.members || [];
-    const targetMember = members.find(m => m.name && m.name.toLowerCase() === targetName);
-    if (!targetMember || targetMember.dead) return;
-
-    const p = this.telemetry.player;
-    if (!p.x || !p.z || !targetMember.x || !targetMember.z) return;
-
-    const dx = p.x - targetMember.x;
-    const dz = p.z - targetMember.z;
-    const dist = Math.hypot(dx, dz);
-    const followDist = this.config.party.traceDistance || 7;
-
-    const now = Date.now();
-    // Only move if significantly farther than follow distance and not spammed
-    if (dist > (followDist + 1.5) && (now - this.lastTraceMoveTime > 650)) {
+    if (dist > (followDist + 1.2) && (now - this.lastTraceMoveTime > 500)) {
       this.lastTraceMoveTime = now;
       const angle = Math.atan2(dz, dx);
       const targetX = targetMember.x + Math.cos(angle) * (followDist * 0.7);
@@ -699,6 +665,22 @@ class SroBotEngine {
       });
       this.log('TRACE', `🚶 [${targetMember.name}] takip ediliyor (${Math.round(dist)}m > ${followDist}m)`, 'info');
     }
+  }
+
+  checkAndExecuteAutoTrace() {
+    if (!this.running || this.paused) return;
+    if (this.state === 'ATTACKING') return;
+
+    // Check party assist member first if assist is enabled
+    if (this.config.party?.assistEnabled && this.config.party?.assistMemberName) {
+      this.traceSpecificMember(this.config.party.assistMemberName);
+      return;
+    }
+
+    if (!this.config.party?.autoTraceEnabled) return;
+    const targetName = (this.config.party.traceTargetName || "").trim().toLowerCase();
+    if (!targetName) return;
+    this.traceSpecificMember(targetName);
   }
 
   handlePartyAssistTarget(payload, legacyMemberName) {
@@ -715,6 +697,8 @@ class SroBotEngine {
     const isPartyMember = this.telemetry.party?.members?.some(m => m.entityId === targetId);
     if (isPartyMember) return;
 
+    const previousAssistId = this.telemetry.assistTarget?.targetId;
+
     this.telemetry.assistTarget = {
       targetId: targetId,
       memberName: memberName,
@@ -725,6 +709,11 @@ class SroBotEngine {
       hpMax: (typeof payload === 'object') ? payload.hpMax : null,
       time: Date.now()
     };
+
+    // If assist target changed to a new mob, immediately update client Zustand store!
+    if (previousAssistId !== targetId) {
+      this.targetDispatcher({ id: targetId, name: this.telemetry.assistTarget.targetName, isPartyMember: false });
+    }
   }
 
   /* =========================================================================
@@ -772,6 +761,27 @@ class SroBotEngine {
       });
     }
     this.telemetry.party = partyData;
+
+    // Extract player level and masteries if in party
+    if (Array.isArray(partyData.members)) {
+      const myMember = partyData.members.find(m =>
+        (this.telemetry.player.id && m.entityId === this.telemetry.player.id) ||
+        (this.telemetry.player.name && m.name && m.name.toLowerCase() === this.telemetry.player.name.toLowerCase()) ||
+        m.isLeader || m.leader
+      );
+      if (myMember) {
+        if (myMember.level) this.telemetry.player.level = myMember.level;
+        if (myMember.name) this.telemetry.player.name = myMember.name;
+        if (myMember.entityId) this.telemetry.player.id = myMember.entityId;
+        if (Array.isArray(myMember.topMasteries)) {
+          if (!this.telemetry.player.masteries) this.telemetry.player.masteries = {};
+          myMember.topMasteries.forEach(tm => {
+            if (tm && tm.masteryId) this.telemetry.player.masteries[tm.masteryId] = tm.level;
+          });
+        }
+      }
+    }
+
     if (this.running && !this.paused) {
       this.checkAndExecuteAutoTrace();
       this.checkAndExecuteAutoRes();
@@ -1006,7 +1016,9 @@ class SroBotEngine {
                 }
               }
 
-              // 2. TAB-LOCK: Press Tab until the party member's target mob is selected natively in the game!
+              // 2. Set client target & TAB-LOCK: Ensure target is locked natively in the game!
+              this.targetDispatcher({ id: targetMobId, name: assist.targetName, isPartyMember: false });
+
               const targetKey = this.config.targeting.key || 'Tab';
               let targetMatched = false;
               const maxTabAttempts = 6;
@@ -1034,13 +1046,18 @@ class SroBotEngine {
                 this.targetLastSeenTime = Date.now();
                 this.log('TARGET', `🎯 Parti hedefi Tab ile kilitlendi: [${this.telemetry.target.name}] (Can: %${this.telemetry.target.hpPercent})`, 'success');
               } else {
-                // Tab did not find the mob yet (maybe out of Tab cone or behind obstacle)
-                // Step closer to fight coordinates and retry
-                if (fightX != null && fightZ != null) {
-                  this.sendGamePacket({ t: 'move.click', d: { x: fightX, z: fightZ } });
+                // If Tab cycle didn't land on it, but client target was set in Zustand store:
+                if (this.telemetry.target.id === targetMobId) {
+                  this.targetLastSeenTime = Date.now();
+                  this.log('TARGET', `🎯 Parti hedefi Store ile kilitlendi: [${this.telemetry.target.name || assist.targetName}]`, 'success');
+                } else {
+                  // Step closer to fight coordinates and retry
+                  if (fightX != null && fightZ != null) {
+                    this.sendGamePacket({ t: 'move.click', d: { x: fightX, z: fightZ } });
+                  }
+                  await this.sleep(250);
+                  continue;
                 }
-                await this.sleep(250);
-                continue;
               }
             } else {
               // No mob to attack right now: Follow the designated party member!
@@ -1080,10 +1097,13 @@ class SroBotEngine {
 
           if (!this.running || this.paused) break;
 
-          // 4. Looting: Only loot if we successfully killed the mob
+          // 4. Looting: Only loot if we successfully killed the mob AND looting is enabled
           if (targetKilled && this.config.looting && this.config.looting.enabled) {
             this.setState('LOOTING');
             await this.executeSafeLooting();
+          } else if (targetKilled && isAssist) {
+            // When looting is disabled, immediately trace the party member so we don't get left behind!
+            this.traceSpecificMember(memberName);
           }
 
           if (targetKilled) {
@@ -1137,9 +1157,22 @@ class SroBotEngine {
         continue;
       }
 
+      // Check if assisted party member switched to a new target
+      if (this.config.party?.assistEnabled && this.config.party?.assistMemberName) {
+        const currentAssist = this.telemetry.assistTarget;
+        if (currentAssist?.targetId && this.telemetry.target.id && Number(currentAssist.targetId) !== Number(this.telemetry.target.id)) {
+          this.log('ASSIST', `🔄 [${this.config.party.assistMemberName}] yeni hedefe geçti -> [${currentAssist.targetName || 'Yeni Mob'}]. Hedef değiştiriliyor.`, 'info');
+          this.telemetry.target.hasTarget = false;
+          this.telemetry.target.id = null;
+          this.targetDispatcher({ id: currentAssist.targetId, name: currentAssist.targetName, isPartyMember: false });
+          break;
+        }
+      }
+
       // 1. Authoritative Death Check: HP is 0%
       if (this.telemetry.target.isDead || (this.telemetry.target.hasTarget && this.telemetry.target.hpPercent <= 0)) {
-        this.log('COMBAT', `💀 [${mobName}] imha edildi (%0 HP). Loot aşamasına geçiliyor.`, 'success');
+        const willLoot = !!(this.config.looting && this.config.looting.enabled);
+        this.log('COMBAT', `💀 [${mobName}] imha edildi (%0 HP).${willLoot ? ' Loot aşamasına geçiliyor.' : ''}`, 'success');
         mobDiedSuccessfully = true;
         this.telemetry.target.isDead = true;
         this.telemetry.target.hasTarget = false;
